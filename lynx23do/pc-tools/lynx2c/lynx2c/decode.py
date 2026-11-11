@@ -35,6 +35,8 @@ class Insn:
     cycles: int
     page_cross: bool
     sem: str
+    flow: str = "seq"
+    target: Optional[int] = None   # alvo ESTÁTICO (branch/BRA/JMP abs/JSR); None se dinâmico
 
     @property
     def next_addr(self):
@@ -42,9 +44,13 @@ class Insn:
 
     def text(self):
         o, m = self.operand, self.mode
+        if m == "imp":
+            return self.mnemonic
+        if m == "rel":
+            return "%s $%04X" % (self.mnemonic, self.target)
         fmt = {"imm": "#$%02X", "zp": "$%02X", "zpx": "$%02X,X", "abs": "$%04X",
                "absx": "$%04X,X", "absy": "$%04X,Y", "izx": "($%02X,X)",
-               "izy": "($%02X),Y", "izp": "($%02X)"}[m]
+               "izy": "($%02X),Y", "izp": "($%02X)", "ind": "($%04X)", "iax": "($%04X,X)"}[m]
         return "%s %s" % (self.mnemonic, fmt % o)
 
 
@@ -61,8 +67,15 @@ def decode_one(data: bytes, offset: int, addr: int, table: Optable = _TABLE) -> 
         operand = data[offset + 1]
     else:
         operand = data[offset + 1] | (data[offset + 2] << 8)  # little-endian, composto de bytes
-    return Insn(addr & 0xFFFF, opcode, info.mnemonic, info.mode, info.length,
-                operand, info.cycles, info.page_cross, info.sem)
+    addr &= 0xFFFF
+    target = None
+    if info.mode == "rel":
+        off = operand - 256 if operand & 0x80 else operand
+        target = (addr + 2 + off) & 0xFFFF
+    elif info.flow in ("jump", "call") and info.mode == "abs":
+        target = operand
+    return Insn(addr, opcode, info.mnemonic, info.mode, info.length,
+                operand, info.cycles, info.page_cross, info.sem, info.flow, target)
 
 
 def decode_block(data: bytes, org: int) -> List[Insn]:

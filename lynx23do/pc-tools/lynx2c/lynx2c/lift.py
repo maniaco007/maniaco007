@@ -12,7 +12,9 @@ def lift(insns: Iterable) -> List[IrOp]:
     ops = []
     for insn in insns:
         defs, uses = _TABLE.defs_uses(insn.sem)
-        if insn.mode == "abs":
+        if insn.flow in ("branch", "ret") or insn.mode == "imp" or insn.flow in ("jump", "call"):
+            region = "NONE"                         # alvo de salto/desvio: não é acesso a memória de dados
+        elif insn.mode == "abs":
             region = region_of(insn.operand)      # operando absoluto: região estática
         elif insn.mode in ("imm", "zp", "zpx"):
             region = REGION_RAM                     # imediato / zero page: sempre RAM

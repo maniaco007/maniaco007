@@ -102,7 +102,63 @@ class TestCyclesAndModes(unittest.TestCase):
         self.assertEqual(r.mem.io_writes, [(0xFC91, r.a)])
 
     def test_opcode_table_shape(self):
-        self.assertEqual(len(REF_OPS), 35)
+        self.assertEqual(len(REF_OPS), 49)   # 35 sequenciais + 14 de fluxo
+
+
+class TestControlFlow(unittest.TestCase):
+    """Semântica de fluxo verificada à mão (não pelo próprio código de referência)."""
+
+    def flow(self, mn, mode, operand, addr, **regs):
+        r = RefCpu(RefMem())
+        for k, v in regs.items():
+            setattr(r, k, v)
+        r.exec_flow(mn, mode, operand, addr)
+        return r
+
+    def test_branch_cycles(self):
+        self.assertEqual(self.flow("BNE", "rel", 0x10, 0x0300, z=0).cycles, 3)       # tomado, mesma página
+        self.assertEqual(self.flow("BNE", "rel", 0x10, 0x0300, z=1).cycles, 2)       # não tomado
+        self.assertEqual(self.flow("BNE", "rel", 0x10, 0x03F0, z=0).cycles, 4)       # tomado, cruza página
+        self.assertEqual(self.flow("BRA", "rel", 0x10, 0x03F0).cycles, 4)
+
+    def test_branch_targets(self):
+        self.assertEqual(self.flow("BEQ", "rel", 0xFE, 0x0300, z=1).pc, 0x0300)       # -2: salta para si mesmo
+        self.assertEqual(self.flow("BCC", "rel", 0x05, 0x0300, c=0).pc, 0x0307)
+        self.assertEqual(self.flow("BCC", "rel", 0x05, 0x0300, c=1).pc, 0x0302)
+
+    def test_all_branch_conditions(self):
+        cases = {"BPL": ("n", 0), "BMI": ("n", 1), "BVC": ("v", 0), "BVS": ("v", 1),
+                 "BCC": ("c", 0), "BCS": ("c", 1), "BNE": ("z", 0), "BEQ": ("z", 1)}
+        for mn, (f, val) in cases.items():
+            self.assertEqual(self.flow(mn, "rel", 0x10, 0x0300, **{f: val}).pc, 0x0312, mn)
+            self.assertEqual(self.flow(mn, "rel", 0x10, 0x0300, **{f: 1 - val}).pc, 0x0302, mn)
+
+    def test_jsr_pushes_last_byte_address_and_rts_returns_after(self):
+        r = RefCpu(RefMem()); r.s = 0xFF
+        r.exec_flow("JSR", "abs", 0x0400, 0x0300)
+        self.assertEqual((r.pc, r.s, r.cycles), (0x0400, 0xFD, 6))
+        self.assertEqual(r.mem.written, {0x01FF: 0x03, 0x01FE: 0x02})                # $0302 = último byte do JSR
+        r.exec_flow("RTS", "imp", None, 0x0400)
+        self.assertEqual((r.pc, r.s, r.cycles), (0x0303, 0xFF, 12))
+
+    def test_jmp_indirect_has_no_page_wrap_bug(self):
+        m = RefMem(preset={0x10FF: 0x34, 0x1100: 0x12, 0x1000: 0xEE})
+        r = RefCpu(m); r.exec_flow("JMP", "ind", 0x10FF, 0x0300)
+        self.assertEqual((r.pc, r.cycles), (0x1234, 6))
+
+    def test_jmp_indexed_indirect(self):
+        m = RefMem(preset={0x2002: 0x78, 0x2003: 0x56})
+        r = RefCpu(m); r.x = 2; r.exec_flow("JMP", "iax", 0x2000, 0x0300)
+        self.assertEqual((r.pc, r.cycles), (0x5678, 6))
+
+    def test_run_program_stops_at_budget_and_at_unresolved(self):
+        img = bytes([0x80, 0xFE])                                                    # BRA * (laço infinito)
+        r = RefCpu(RefMem())
+        self.assertEqual(r.run_program(img, 0x300, {0x300}, 0x300, 100), ("yield", 0x300))
+        self.assertEqual(r.cycles, 102)                                              # 34 iterações x 3 ciclos
+        r = RefCpu(RefMem())
+        self.assertEqual(r.run_program(bytes([0x4C, 0x00, 0x90]), 0x300, {0x300}, 0x300, 100),
+                         ("unresolved", 0x9000))
 
 
 if __name__ == "__main__":

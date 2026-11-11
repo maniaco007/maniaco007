@@ -85,6 +85,12 @@ int  lx_overlay_init(const LxCart *cart);
  * e marca o overlay ativo na faixa. Invalida overlays sobrepostos. */
 void lx_overlay_load(lx_u16 overlay_id, lx_u32 cart_off, lx_u16 dest, lx_u16 len);
 
+/* Marca 'ov' como ativo na sua faixa (SEM copiar bytes) e desativa overlays
+ * sobrepostos. lx_overlay_load() = cópia + lx_overlay_activate(). Também usado
+ * por testes no host, onde o conteúdo da RAM é montado pelo próprio teste. */
+void lx_overlay_activate(const LxOverlay *ov);
+void lx_overlay_reset(void);                 /* nenhum overlay ativo */
+
 /* Overlay ativo que contém 'addr' (NULL se nenhum). */
 const LxOverlay *lx_overlay_at(lx_u16 addr);
 

@@ -152,8 +152,9 @@ inline, SMC, modos do Suzy, orçamento. Esquema em `games/_template/manifest.tom
 
 ## 5. Tratamento de RAM, pilha e E/S
 - RAM Lynx = `lx_u8 lx_ram[65536]` (64 KB da DRAM do 3DO).
-- `JSR`: empilha (endereço−1) **na pilha emulada** e chama a rotina C; `RTS`: desempilha e
-  compara — se bater com o chamador C, `return` nativo; senão `lx_dispatch()`.
+- `JSR`: empilha (endereço do último byte do JSR) **na pilha emulada**; `RTS`: desempilha e soma 1. Na **fase 1** (implementada,
+  `docs/07`) ambos só produzem o próximo PC e o trampolim despacha. Na **fase 2** `JSR` virará chamada C direta e `RTS` fará
+  `return` nativo quando o endereço bater com o chamador C, senão `lx_dispatch()`.
 - Acessos a `$FC00–$FCFF` → `lx_suzy_*`; `$FD00–$FDFF` → `lx_mikey_*`; `$FFF9` (MAPCTL)
   trata sobreposição de ROM/vetores.
 

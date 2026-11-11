@@ -71,15 +71,20 @@ typedef lx_u32 (*LxCodeFn)(LxCpu *cpu);
  * principal do 3DO uma vez por frame (ver runtime/platform). */
 lx_u32 lx_run(LxCpu *cpu, lx_u32 pc);
 
-/* Despacho lento por PC dinâmico: JMP (abs), JMP (abs,X), RTS com endereço
- * divergente, retorno de IRQ. Busca nas tabelas do overlay ativo
- * (lx_overlay.h). Chama lx_unresolved() se não houver entrada. */
+/* Executa o bloco traduzido que começa em 'pc' e devolve o resultado dele
+ * (próximo PC ou LX_PC_*). Ordem de busca: hook HLE (lx_hook_find) -> tabela
+ * do overlay ativo em 'pc' (busca binária). Se não houver nenhum, chama
+ * lx_unresolved(pc) e devolve LX_PC_HALT. */
 lx_u32 lx_dispatch(LxCpu *cpu, lx_u32 pc);
 
-/* Fatal: PC sem código traduzido. Registra pc, overlay ativo e S, e escreve
- * "unresolved.log" (host) / console de debug (3DO). O log alimenta o próximo
- * ciclo do lynx2c como novo seed (docs/02 §3, estágio B). */
+/* PC sem código traduzido: erro fatal CONTROLADO. Registra o PC em
+ * lx_unresolved_pc (e incrementa lx_unresolved_count); a camada de plataforma
+ * escreve "unresolved.log" (host) / console de debug (3DO). O log alimenta o
+ * próximo ciclo do lynx2c como novo seed (docs/02 §3, estágio B). Não aborta o
+ * processo: lx_dispatch devolve LX_PC_HALT e lx_run encerra. */
 void lx_unresolved(lx_u32 pc);
+extern lx_u32 lx_unresolved_pc;
+extern lx_u32 lx_unresolved_count;
 
 /* ---- Contabilidade de ciclos / eventos ---------------------------------------
  * O código gerado soma, ao FIM de cada bloco, o custo em ciclos 65C02 do bloco

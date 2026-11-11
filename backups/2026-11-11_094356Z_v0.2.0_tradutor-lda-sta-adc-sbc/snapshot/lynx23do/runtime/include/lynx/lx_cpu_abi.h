@@ -1,0 +1,102 @@
+/*
+ * lx_cpu_abi.h — ABI (contrato) entre o código C GERADO pelo lynx2c e o runtime.
+ *
+ * Este header descreve só o CONTRATO; o gerador de opcodes ainda não existe.
+ * Qualquer mudança aqui exige regenerar todo o código traduzido (ver
+ * LX_ABI_VERSION, conferido pelo código gerado em tempo de compilação).
+ *
+ * Modelo de execução (docs/02-pipeline-aot-pc.md §7):
+ *   - Cada unidade traduzida é uma função LxCodeFn(LxCpu*) que executa UM
+ *     bloco básico (fase 1) ou uma rotina com entradas (fase 2).
+ *   - O valor de retorno diz o que fazer a seguir (próximo PC do Lynx ou um
+ *     código especial). Um trampolim (lx_run) despacha — sem recursão
+ *     ilimitada no stack do ARM (armcc não garante tail calls).
+ *   - JSR/RTS usam a pilha EMULADA em $0100-$01FF (os jogos mexem nela:
+ *     PHA/PLA de endereços, "RTS trick", troca de tarefas). RTS verifica o
+ *     endereço desempilhado; se bater com o chamador C, retorna nativamente.
+ *   - NÃO existe interpretador de 65C02 em tempo de execução. PC sem código
+ *     traduzido => lx_unresolved(pc) (aborta com relatório; ver
+ *     docs/05-riscos-e-decisoes-abertas.md, D2).
+ */
+#ifndef LX_CPU_ABI_H
+#define LX_CPU_ABI_H
+
+#include "lx_types.h"
+#include "lx_config.h"
+
+#define LX_ABI_VERSION 1
+
+/* Contexto da CPU. Flags N/Z são PREGUIÇOSOS: guardam o valor que os
+ * originou; o lynx2c só materializa N/Z quando a análise de vivacidade de
+ * flags prova que alguém os lê (a maioria dos flags é morta).
+ *   N = (nsrc & 0x80) != 0      Z = (zsrc == 0)
+ * N e Z são campos separados porque BIT os desacopla (N = M7, Z = (A&M)==0). */
+typedef struct LxCpu {
+    lx_u8  a, x, y, s;
+    lx_u8  c, v, d, i;          /* flags explícitos, 0 ou 1 */
+    lx_u8  nsrc, zsrc;          /* fontes preguiçosas de N e Z */
+    lx_u8  b;                   /* flag B (só relevante em PHP/BRK) */
+    lx_u8  _pad;
+    lx_u32 cycles;              /* ciclos Lynx desde o último lx_sched_service() */
+    lx_u32 next_event;          /* limiar: quando cycles >= next_event, serviço */
+    lx_u32 irq_pending;         /* máscara de IRQs levantados pelo agendador */
+} LxCpu;
+
+/* P empacotado (PHP, interrupções) <-> campos */
+LX_INLINE lx_u8 lx_cpu_pack_p(const LxCpu *c)
+{
+    return (lx_u8)( ((c->nsrc & 0x80) ? 0x80 : 0) | (c->v ? 0x40 : 0) | 0x20 |
+                    (c->b ? 0x10 : 0) | (c->d ? 0x08 : 0) | (c->i ? 0x04 : 0) |
+                    (c->zsrc == 0 ? 0x02 : 0) | (c->c ? 0x01 : 0) );
+}
+LX_INLINE void lx_cpu_unpack_p(LxCpu *c, lx_u8 p)
+{
+    c->nsrc = (lx_u8)(p & 0x80);
+    c->zsrc = (lx_u8)((p & 0x02) ? 0 : 1);
+    c->v = (lx_u8)((p >> 6) & 1);  c->b = (lx_u8)((p >> 4) & 1);
+    c->d = (lx_u8)((p >> 3) & 1);  c->i = (lx_u8)((p >> 2) & 1);
+    c->c = (lx_u8)(p & 1);
+}
+
+/* ---- Valores de retorno de LxCodeFn --------------------------------------- */
+/* 0x0000..0xFFFF : continuar a execução neste PC do Lynx (via lx_dispatch)    */
+#define LX_PC_RETURN   0x10000UL  /* RTS/RTI "limpo": voltar ao chamador C        */
+#define LX_PC_YIELD    0x10001UL  /* ponto de sincronismo: frame pronto p/ apresentar */
+#define LX_PC_HALT     0x10002UL  /* parada (STP/erro fatal controlado)           */
+
+typedef lx_u32 (*LxCodeFn)(LxCpu *cpu);
+
+/* ---- Trampolim e despacho --------------------------------------------------- */
+/* Executa a partir de 'pc' até LX_PC_YIELD/LX_PC_HALT. Chamado pelo laço
+ * principal do 3DO uma vez por frame (ver runtime/platform). */
+lx_u32 lx_run(LxCpu *cpu, lx_u32 pc);
+
+/* Despacho lento por PC dinâmico: JMP (abs), JMP (abs,X), RTS com endereço
+ * divergente, retorno de IRQ. Busca nas tabelas do overlay ativo
+ * (lx_overlay.h). Chama lx_unresolved() se não houver entrada. */
+lx_u32 lx_dispatch(LxCpu *cpu, lx_u32 pc);
+
+/* Fatal: PC sem código traduzido. Registra pc, overlay ativo e S, e escreve
+ * "unresolved.log" (host) / console de debug (3DO). O log alimenta o próximo
+ * ciclo do lynx2c como novo seed (docs/02 §3, estágio B). */
+void lx_unresolved(lx_u32 pc);
+
+/* ---- Contabilidade de ciclos / eventos ---------------------------------------
+ * O código gerado soma, ao FIM de cada bloco, o custo em ciclos 65C02 do bloco
+ * (constante em tempo de tradução) e testa o limiar. Em arestas de retorno
+ * (branch para trás) a verificação é obrigatória: loops de espera por vblank/IRQ
+ * dependem de o tempo avançar.
+ * lx_sched_service() avança timers do Mikey (hblank/vblank/áudio), atualiza
+ * SPRSYS/busy do Suzy e pode DESVIAR para o vetor de IRQ (empilha PC e P). */
+lx_u32 lx_sched_service(LxCpu *cpu, lx_u32 next_pc);
+
+#define LX_SCHED_CHECK(cpu, ncycles, next_pc)                              \
+    do {                                                                    \
+        (cpu)->cycles += (ncycles);                                         \
+        if ((cpu)->cycles >= (cpu)->next_event) {                           \
+            lx_u32 lx_r_ = lx_sched_service((cpu), (next_pc));              \
+            if (lx_r_ != (lx_u32)(next_pc)) return lx_r_;                   \
+        }                                                                   \
+    } while (0)
+
+#endif /* LX_CPU_ABI_H */

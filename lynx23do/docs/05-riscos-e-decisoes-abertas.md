@@ -40,7 +40,8 @@ Cel Engine; HLE do Mikey/áudio; qualquer ROM ou BIOS.
 
 ## 4. Próximas etapas
 
-> v0.2.0 concluiu parte do item 3 (ADC, SBC, LDA, STA) — ver `docs/06`.
+> v0.2.0 concluiu parte do item 3 (ADC, SBC, LDA, STA) — ver `docs/06`. v0.3.0 trouxe o fluxo de controle, CFG e
+> `lx_run` — ver `docs/07`, que lista os próximos passos.
 
 1. Congelar decisões D1–D9 e corrigir os itens `[VERIFY]` com a documentação.
 2. `lynxtrace` mínimo + `lynx2c` estágios A–C (ingest/discover) sobre um **homebrew** pequeno

@@ -11,12 +11,13 @@
 #include "lynx/lx_suzy.h"
 #include "lynx/lx_mikey.h"
 
-#define LX_T_IO_MAX 64
+#define LX_T_IO_MAX 1024
 unsigned lx_t_io_n;
 lx_u32   lx_t_io_addr[LX_T_IO_MAX];
 lx_u8    lx_t_io_val[LX_T_IO_MAX];
 unsigned lx_t_io_overflow;
 unsigned lx_t_misroute;
+lx_u32   lx_t_yield_pc = 0xFFFFFFFFUL;   /* PC visto por lx_sched_service (ciclos >= orçamento) */
 
 static void io_log(lx_u32 addr, lx_u8 val)
 {
@@ -53,9 +54,12 @@ void lx_mikey_write(lx_u32 addr, lx_u8 val)
     io_log(addr, val);
 }
 
-/* nunca deve ser chamado: o harness fixa next_event = 0xFFFFFFFF */
+/* Agendador de teste: chamado por LX_SCHED_CHECK quando ciclos >= next_event (= orçamento do vetor).
+ * Registra o PC e devolve YIELD (parada em fronteira de bloco). No harness de blocos retos
+ * next_event = 0xFFFFFFFF e isto nunca é chamado. */
 lx_u32 lx_sched_service(LxCpu *cpu, lx_u32 next_pc)
 {
     (void)cpu;
-    return next_pc;
+    lx_t_yield_pc = next_pc;
+    return LX_PC_YIELD;
 }

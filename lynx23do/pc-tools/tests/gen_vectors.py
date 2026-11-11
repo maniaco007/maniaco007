@@ -25,7 +25,10 @@ from lynx2c.decode import decode_block
 from lynx2c.emit_c import emit_unit
 from lynx2c.lift import lift
 from lynx2c.opt import flag_liveness
-from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS, _LEN
+from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS as _ALL_OPS, FLOW_MNEMONICS
+
+# corpus de BLOCOS RETOS: só opcodes sequenciais (o fluxo de controle é testado em gen_programs.py)
+REF_OPS = {k: v for k, v in _ALL_OPS.items() if v[0] not in FLOW_MNEMONICS}
 
 EDGE = [0x00, 0x01, 0x02, 0x0A, 0x0F, 0x10, 0x7F, 0x80, 0x81, 0x99, 0x9A, 0xFE, 0xFF]
 

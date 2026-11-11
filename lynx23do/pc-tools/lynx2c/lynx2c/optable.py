@@ -17,6 +17,7 @@ class OpInfo:
     cycles: int
     page_cross: bool
     sem: str
+    flow: str = "seq"   # seq | branch | jump | jump_ind | call | ret
 
 
 class Optable:
@@ -35,7 +36,8 @@ class Optable:
             if e["sem"] not in self.sems:
                 raise ValueError("semântica desconhecida: %s" % e["sem"])
             self.by_opcode[opc] = OpInfo(opc, e["mnemonic"], e["mode"], self.modes[e["mode"]],
-                                         e["cycles"], bool(e["page_cross"]), e["sem"])
+                                         e["cycles"], bool(e["page_cross"]), e["sem"],
+                                         e.get("flow", "seq"))
 
     def get(self, opcode):
         return self.by_opcode.get(opcode)

@@ -43,8 +43,35 @@ def build_ref_table():
     return t
 
 
+# ---- fluxo de controle ------------------------------------------------------------------
+# Desvios condicionais: padrão xxy10000 — xx escolhe o flag (00 N, 01 V, 10 C, 11 Z) e y = valor
+# do flag que FAZ o desvio. BPL=$10 BMI=$30 BVC=$50 BVS=$70 BCC=$90 BCS=$B0 BNE=$D0 BEQ=$F0.
+_BR_NAMES = {("N", 0): "BPL", ("N", 1): "BMI", ("V", 0): "BVC", ("V", 1): "BVS",
+             ("C", 0): "BCC", ("C", 1): "BCS", ("Z", 0): "BNE", ("Z", 1): "BEQ"}
+BR_COND = {}                                   # mnemônico -> (flag, valor)
+
+
+def _build_flow():
+    t = {}
+    for xx, f in enumerate("NVCZ"):
+        for y in (0, 1):
+            t[(xx << 6) | (y << 5) | 0x10] = (_BR_NAMES[(f, y)], "rel")
+            BR_COND[_BR_NAMES[(f, y)]] = (f, y)
+    t[0x80] = ("BRA", "rel")                   # 65C02
+    t[0x4C] = ("JMP", "abs")
+    t[0x6C] = ("JMP", "ind")
+    t[0x7C] = ("JMP", "iax")                   # 65C02
+    t[0x20] = ("JSR", "abs")
+    t[0x60] = ("RTS", "imp")
+    return t
+
+
+FLOW_OPS = _build_flow()
+FLOW_MNEMONICS = {"BRA", "JMP", "JSR", "RTS"} | set(BR_COND)
 REF_OPS = build_ref_table()
-_LEN = {"imm": 2, "zp": 2, "zpx": 2, "izx": 2, "izy": 2, "izp": 2, "abs": 3, "absx": 3, "absy": 3}
+REF_OPS.update(FLOW_OPS)
+_LEN = {"imm": 2, "zp": 2, "zpx": 2, "izx": 2, "izy": 2, "izp": 2, "abs": 3, "absx": 3, "absy": 3,
+        "rel": 2, "ind": 3, "iax": 3, "imp": 1}
 
 
 class RefMem:
@@ -83,6 +110,7 @@ class RefCpu:
         self.s = 0xFF
         self.c = self.v = self.d = self.n = self.z = self.i = self.b = 0
         self.cycles = 0
+        self.pc = 0
 
     # ---- P empacotado: N V 1 B D I Z C ----
     def pack_p(self):
@@ -127,6 +155,10 @@ class RefCpu:
 
     @staticmethod
     def _base_cycles(mn, mode):
+        if mn in FLOW_MNEMONICS:
+            if mode == "rel" or mode == "imp" and mn != "RTS":
+                return 2
+            return {"abs": 3 if mn == "JMP" else 6, "ind": 6, "iax": 6, "imp": 6}[mode]
         if mn == "STA":
             return {"zp": 3, "zpx": 4, "abs": 4, "absx": 5, "absy": 5, "izx": 6, "izy": 6, "izp": 5}[mode]
         return {"imm": 2, "zp": 3, "zpx": 4, "abs": 4, "absx": 4, "absy": 4, "izx": 6, "izy": 5, "izp": 5}[mode]
@@ -209,6 +241,89 @@ class RefCpu:
             else:
                 self._sbc_bin(m)
 
+    # ---- fluxo de controle ----
+    def _flag(self, f):
+        return {"N": self.n, "V": self.v, "C": self.c, "Z": self.z}[f]
+
+    def _push(self, v):
+        self.mem.write(0x100 | self.s, v)
+        self.s = (self.s - 1) & 0xFF
+
+    def _pull(self):
+        self.s = (self.s + 1) & 0xFF
+        return self.mem.read(0x100 | self.s)
+
+    def exec_flow(self, mn, mode, operand, addr):
+        """Executa um desvio/salto/JSR/RTS em 'addr' e deixa o resultado em self.pc."""
+        self.cycles += self._base_cycles(mn, mode)
+        nxt = (addr + _LEN[mode]) & 0xFFFF
+        if mode == "rel":
+            taken = True if mn == "BRA" else (self._flag(BR_COND[mn][0]) == BR_COND[mn][1])
+            if taken:
+                off = operand - 256 if operand & 0x80 else operand
+                tgt = (nxt + off) & 0xFFFF
+                self.cycles += 1
+                if (tgt & 0xFF00) != (nxt & 0xFF00):
+                    self.cycles += 1
+                self.pc = tgt
+            else:
+                self.pc = nxt
+        elif mn == "JMP":
+            if mode == "abs":
+                self.pc = operand
+            else:
+                ea = operand if mode == "ind" else (operand + self.x) & 0xFFFF
+                lo = self.mem.read(ea)
+                hi = self.mem.read((ea + 1) & 0xFFFF)       # 65C02: sem o bug de wrap de página
+                self.pc = lo | (hi << 8)
+        elif mn == "JSR":
+            ret = (addr + 2) & 0xFFFF                        # endereço do último byte do JSR
+            self._push(ret >> 8)
+            self._push(ret & 0xFF)
+            self.pc = operand
+        elif mn == "RTS":
+            lo = self._pull()
+            hi = self._pull()
+            self.pc = (((hi << 8) | lo) + 1) & 0xFFFF
+        else:
+            raise ValueError(mn)
+
+    def run_program(self, image, org, entries, entry_pc, budget):
+        """Executa uma imagem com fluxo de controle até uma FRONTEIRA DE BLOCO.
+
+        Fronteira = instrução de fluxo, ou próximo PC sequencial que é uma entrada (líder) ou sai da
+        imagem. Em cada fronteira (mesma ordem do código traduzido: LX_SCHED_CHECK e depois despacho):
+          1. ciclos >= budget  -> ('yield', pc)
+          2. pc fora de 'entries' -> ('unresolved', pc)
+        """
+        end = org + len(image)
+        entries = set(entries)
+        self.pc = entry_pc
+        while True:
+            addr = self.pc
+            opcode = image[addr - org]
+            if opcode not in REF_OPS:
+                raise ValueError("opcode $%02X em $%04X fora do subconjunto de referência" % (opcode, addr))
+            mn, mode = REF_OPS[opcode]
+            n = _LEN[mode]
+            if n == 1:
+                operand = None
+            elif n == 2:
+                operand = image[addr - org + 1]
+            else:
+                operand = image[addr - org + 1] | (image[addr - org + 2] << 8)
+            flow = mn in FLOW_MNEMONICS
+            if flow:
+                self.exec_flow(mn, mode, operand, addr)
+            else:
+                self.exec_insn(opcode, operand)
+                self.pc = (addr + n) & 0xFFFF
+            if flow or self.pc in entries or not (org <= self.pc < end):
+                if self.cycles >= budget:
+                    return ("yield", self.pc)
+                if self.pc not in entries:
+                    return ("unresolved", self.pc)
+
     def run(self, code):
         """Executa um bloco reto de bytes de código (sem fluxo de controle)."""
         off = 0
@@ -217,6 +332,8 @@ class RefCpu:
             if opcode not in REF_OPS:
                 raise ValueError("opcode $%02X fora do subconjunto de referência" % opcode)
             mode = REF_OPS[opcode][1]
+            if REF_OPS[opcode][0] in FLOW_MNEMONICS:
+                raise ValueError("run() é só para blocos retos; use run_program()")
             n = _LEN[mode]
             if n == 1:
                 operand = None

@@ -6,9 +6,10 @@ Framework para portar jogos selecionados de Atari Lynx para rodar **nativamente*
 - **Recompilação estática (AOT)** do 65C02 → C89 (sem interpretador em tempo de execução);
 - **HLE do Suzy**: SCBs de sprite viram Cels e são desenhados por `DrawCels()`.
 
-**Estágio atual: v0.2.0 — arquitetura aprovada (D1–D9 conforme recomendado); primeiro tradutor
-de opcodes pronto: LDA, STA, ADC, SBC (35 opcodes, todos os modos), verificado por teste diferencial.**
-Ainda sem fluxo de controle, sem lynxtrace completo e sem inicialização do Cel Engine (de propósito).
+**Estágio atual: v0.3.0 — arquitetura aprovada (D1–D9); tradutor com 49 opcodes: LDA, STA, ADC, SBC +
+fluxo de controle (Bcc, BRA, JMP, JSR, RTS), CFG, vivacidade de flags entre blocos e trampolim `lx_run`;
+verificado por teste diferencial (blocos e programas) e teste de mutação.**
+Ainda sem o restante do conjunto 65C02, sem perfil dinâmico (lynxtrace) e sem Cel Engine (de propósito).
 
 ## Leia nesta ordem
 1. [`docs/01-visao-geral-e-fluxo-de-dados.md`](docs/01-visao-geral-e-fluxo-de-dados.md) — modelo mental ROM → `.iso`
@@ -17,20 +18,21 @@ Ainda sem fluxo de controle, sem lynxtrace completo e sem inicialização do Cel
 4. [`docs/04-orcamento-memoria-2mb.md`](docs/04-orcamento-memoria-2mb.md) — cabe em 2 MB?
 5. [`docs/05-riscos-e-decisoes-abertas.md`](docs/05-riscos-e-decisoes-abertas.md) — decisões D1–D9 (aprovadas) e riscos
 6. [`docs/06-traducao-lda-sta-adc-sbc.md`](docs/06-traducao-lda-sta-adc-sbc.md) — primeiro tradutor e o que os testes provam
+7. [`docs/07-fluxo-de-controle.md`](docs/07-fluxo-de-controle.md) — CFG, JSR/RTS, flags entre blocos, mutação
 
 ## Estrutura
 ```
 lynx23do/
 ├── docs/                    arquitetura (acima)
 ├── pc-tools/                roda NO PC (Python 3, só stdlib — decisão D1)
-│   ├── lynx2c/              tradutor AOT: decode → lift → optimize → emit  (ingest/discover: a fazer)
+│   ├── lynx2c/              tradutor AOT: decode → CFG → lift → liveness → emit  (ingest/discover: a fazer)
 │   ├── lynxtrace/           núcleo 65C02 de referência (oráculo; subconjunto atual) + perfil dinâmico (a fazer)
 │   ├── spritecook/          sprites Suzy → dados de Cel (formato "packed" do 3DO) + PLUT
 │   ├── pack3do/             Makefile do SDK, árvore do disco, ISO
 │   └── tests/               testes diferenciais e de determinismo
 ├── runtime/                 código NATIVO (C89): 3DO e host
 │   ├── include/lynx/        headers públicos (API do HLE, ABI do código gerado)
-│   ├── src/                 núcleo portável: lx_mem.c pronto; sched/dispatch/overlay/Suzy/Mikey a implementar
+│   ├── src/                 núcleo portável: lx_mem, lx_dispatch, lx_overlay prontos; sched/Suzy/Mikey a implementar
 │   ├── platform/3do/        backend 3DO (DrawCels, VRAM, pad, CD) — a implementar
 │   ├── platform/host/       backend PC (rasterizador de software) — a implementar
 │   └── tests/               header_check.c (C89 estrito)
@@ -46,7 +48,7 @@ Fora deste diretório (raiz do repositório):
 ```
 lynx23do/scripts/check_headers.sh          # headers em C89 estrito (gcc), configs host e 3DO
 scripts/check_backups_immutable.sh         # backups/ só recebe adições
-lynx23do/pc-tools/tests/run_diff.sh        # unitários + diferencial (557 mil vetores, -O0/-O2)
+lynx23do/pc-tools/tests/run_diff.sh        # 55 unitários + diferencial (557 mil vetores de blocos + 9,7 mil de programas, -O0/-O2)
 ```
 O armcc/SDK 3DO **não** está disponível neste ambiente; a compatibilidade com o SDK
 (assinaturas e formatos do CCB) está marcada `[VERIFY]` nos headers.
