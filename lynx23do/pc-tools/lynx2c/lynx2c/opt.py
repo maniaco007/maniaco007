@@ -56,7 +56,7 @@ def cfg_liveness(cfg: Cfg, ops_by_block: Dict[int, List[IrOp]], precise_exits: b
     def live_out(b):
         if precise_exits:
             return ALL_FLAGS
-        if b.kind in ("jump_ind", "ret", "call"):
+        if b.kind in ("jump_ind", "ret", "call", "brk"):
             return ALL_FLAGS
         out = frozenset()
         for s in b.succs:

@@ -10,6 +10,7 @@ Regras (docs/02 §2–§3):
 Determinístico: tudo ordenado por endereço.
 """
 
+import dataclasses
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
@@ -23,11 +24,15 @@ class OverlapError(DecodeError):
         self.addr, self.other = addr, other
 
 
+class SmcError(DecodeError):
+    pass
+
+
 @dataclass
 class Block:
     start: int
     insns: List[Insn]
-    kind: str                     # 'fall' | 'branch' | 'jump' | 'jump_ind' | 'call' | 'ret'
+    kind: str                     # 'fall' | 'branch' | 'jump' | 'jump_ind' | 'call' | 'ret' | 'brk'
     succs: List[int]              # sucessores estáticos (podem estar fora da imagem)
     next_addr: int                # endereço sequencial após a última instrução
     retaddr: bool = False         # começa na continuação de um JSR (alvo dinâmico de RTS)
@@ -50,7 +55,13 @@ class Cfg:
         return sorted(self.blocks)
 
 
-def build_cfg(image: bytes, org: int, entries: Iterable[int]) -> Cfg:
+def build_cfg(image: bytes, org: int, entries: Iterable[int], smc_operands: Iterable[int] = (),
+              hooks: Iterable[int] = ()) -> Cfg:
+    """smc_operands: endereços de bytes de OPERANDO modificados em execução (política param_operand,
+    docs/02 §6). Suportado: operando de instrução IMEDIATA (lido da RAM a cada execução). Erro explícito se
+    o byte alterado for um OPCODE, ou se pertencer a instrução de outro modo (ainda não suportado)."""
+    smc = set(smc_operands)
+    hooks = set(hooks)       # endereços cuja rotina é SUBSTITUÍDA por hook HLE: fronteira de bloco, não decodificar/seguir
     end = org + len(image)
     if end > 0x10000:
         raise ValueError("imagem ultrapassa o espaço de 64 KB")
@@ -69,9 +80,19 @@ def build_cfg(image: bytes, org: int, entries: Iterable[int]) -> Cfg:
     while work:
         a = work.pop()
         while inside(a) and a not in insn_at:
+            if a in hooks:                       # o hook substitui este código: não decodifica nem segue
+                leaders.add(a)                   # mas o bloco anterior TERMINA aqui (fall-through sequencial)
+                break
             if a in owner:                       # cai NO MEIO de instrução já decodificada
                 raise OverlapError(a, owner[a])
             insn = decode_one(image, a - org, a)
+            if a in smc:
+                raise SmcError("opcode em $%04X é modificado em execução: SMC de opcode não suportado" % a)
+            if any(b in smc for b in range(a + 1, a + insn.length)):
+                if insn.mode != "imm":
+                    raise SmcError("operando de %s em $%04X é modificado em execução: param_operand só "
+                                   "suporta modo imediato por ora (modo %s)" % (insn.mnemonic, a, insn.mode))
+                insn = dataclasses.replace(insn, smc=True)
             for b in range(a, a + insn.length):
                 if b in owner:
                     raise OverlapError(a, owner[b])
@@ -99,10 +120,18 @@ def build_cfg(image: bytes, org: int, entries: Iterable[int]) -> Cfg:
                     leaders.add(n)
                     retconts.add(n)
                     work.append(n)
+            elif f == "brk":                       # o handler volta por RTI para addr+2 (continuação)
+                n = insn.next_addr
+                if inside(n):
+                    leaders.add(n)
+                    retconts.add(n)
+                    work.append(n)
             break  # jump_ind, ret, e todos os acima terminam a varredura linear
 
     cfg = Cfg(org, len(image), entries)
     for start in sorted(leaders):
+        if start in hooks:                       # sem bloco: lx_dispatch consulta o hook ANTES da tabela
+            continue
         insns: List[Insn] = []
         a = start
         while True:

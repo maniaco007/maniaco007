@@ -2,7 +2,7 @@
 import unittest
 
 from lynx2c.decode import decode_block
-from lynx2c.emit_c import emit_block, emit_unit
+from lynx2c.emit_c import emit_block, emit_overlay, emit_unit
 from lynx2c.lift import lift
 from lynx2c.opt import flag_liveness
 
@@ -32,12 +32,31 @@ class TestLiveness(unittest.TestCase):
         self.assertEqual(ops_of("E903")[0].dead, frozenset())
 
 
+class TestAllOpcodes(unittest.TestCase):
+    def test_every_opcode_translates_to_c89_text(self):
+        from lynx2c.optable import Optable
+        from lynx2c.pipeline import analyze
+        for opc, info in Optable().by_opcode.items():
+            image = bytes([opc] + [0x10] * (info.length - 1)) + b"\x60"          # operando + RTS
+            cfg, ops = analyze(image, 0x300, [0x300])
+            c = emit_overlay(0, cfg, ops)
+            self.assertIn("lx_ov0_0300", c, "opcode $%02X" % opc)
+            self.assertNotIn("//", c)
+
+
 class TestEmit(unittest.TestCase):
     def test_dead_flags_not_materialized(self):
         ops = ops_of("A901 A902")
         c = emit_block("f", ops, 0x200)
         self.assertEqual(c.count("cpu->nsrc"), 1)       # só o segundo LDA
         self.assertEqual(c.count("cpu->zsrc"), 1)
+
+    def test_smc_immediate_reads_ram_at_run_time(self):
+        from lynx2c.pipeline import analyze
+        cfg, ops = analyze(bytes.fromhex("A901 6902 60"), 0x300, [0x300], smc_operands=[0x303])
+        c = emit_overlay(0, cfg, ops)
+        self.assertIn("m = 0x01;", c)                       # LDA #1 normal (constante)
+        self.assertIn("m = lx_rd8(0x0303);", c)             # ADC # com operando auto-modificável
 
     def test_static_region_classification(self):
         c = emit_block("f", ops_of("AD0010 AD91FC AD00FD AD10FF"), 0x200)

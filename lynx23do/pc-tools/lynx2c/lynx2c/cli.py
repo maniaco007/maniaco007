@@ -52,6 +52,10 @@ def main(argv=None) -> int:
         if name in ("translate", "cfg"):
             s.add_argument("--entry", type=_int, action="append", default=None,
                            help="entrada adicional (repetível); padrão: --org")
+            s.add_argument("--hook", type=_int, action="append", default=None, metavar="ADDR",
+                           help="rotina substituída por hook HLE no runtime: não é decodificada (repetível)")
+            s.add_argument("--smc-operand", type=_int, action="append", default=None, metavar="ADDR",
+                           help="byte de operando IMEDIATO modificado em execução (repetível; param_operand)")
         if name == "translate":
             s.add_argument("--overlay-id", type=int, default=0)
             s.add_argument("--precise-exits", action="store_true",
@@ -72,7 +76,7 @@ def main(argv=None) -> int:
 
     entries = a.entry or [a.org]
     try:
-        cfg, ops = analyze(data, a.org, entries, getattr(a, "precise_exits", False))
+        cfg, ops = analyze(data, a.org, entries, getattr(a, "precise_exits", False), a.smc_operand or (), a.hook or ())
     except (DecodeError, ValueError) as e:
         print("erro: %s" % e, file=sys.stderr)
         return 2

@@ -6,7 +6,7 @@ Saídas em <outdir>:
   fns.txt       índice -> org, bytes, disassembly (diagnóstico de falhas)
 
 Corpus:
-  1. EXAUSTIVO  ADC/SBC imediato: M(256) x A(256) x C(2) x D(2) = 262144 vetores por opcode
+  1. EXAUSTIVO  ADC/SBC/CMP imediato: M(256) x A(256) x C(2) x D(2) = 262144 vetores por opcode
   2. SINGLE     cada um dos 35 opcodes x N codificações de operando (bordas de região/página/ZP)
   3. BLOCOS     sequências aleatórias de 2..8 instruções (exercita vivacidade de flags e soma de ciclos)
 Semente fixa => corpus reproduzível.
@@ -58,7 +58,9 @@ def rand_abs(rng, indexed):
 def encode(opcode, mode, rng):
     if mode == "imm":
         return bytes([opcode, rv(rng)])
-    if mode in ("zp", "zpx", "izx", "izy", "izp"):
+    if mode in ("imp", "acc"):
+        return bytes([opcode])
+    if mode in ("zp", "zpx", "zpy", "izx", "izy", "izp"):
         return bytes([opcode, rand_zp(rng)])
     a = rand_abs(rng, mode in ("absx", "absy"))
     return bytes([opcode, a & 0xFF, a >> 8])
@@ -139,7 +141,7 @@ def build(outdir, n_variants=10, n_vec=60, n_blocks=200, n_block_vec=60, exhaust
     c = Corpus(outdir)
     rng = c.rng
     if exhaustive:                                  # 1. exaustivo ADC/SBC imediato
-        for opc in (0x69, 0xE9):
+        for opc in (0x69, 0xE9, 0xC9):                # ADC #, SBC #, CMP #
             for m in range(256):
                 fn = c.add_fn([opc, m])
                 for a in range(256):
@@ -166,5 +168,5 @@ def build(outdir, n_variants=10, n_vec=60, n_blocks=200, n_block_vec=60, exhaust
 
 if __name__ == "__main__":
     out = sys.argv[1] if len(sys.argv) > 1 else "build/test"
-    c = build(out)
+    c = build(out, exhaustive=not os.environ.get("LX_LITE"))
     print("funções: %d   vetores: %d   -> %s" % (len(c.fns), c.nvec, out))

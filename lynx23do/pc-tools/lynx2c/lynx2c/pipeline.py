@@ -8,9 +8,9 @@ from .lift import lift
 from .opt import cfg_liveness
 
 
-def analyze(image: bytes, org: int, entries: Iterable[int], precise_exits: bool = False
-            ) -> Tuple[Cfg, Dict[int, List[IrOp]]]:
-    cfg = build_cfg(image, org, entries)
+def analyze(image: bytes, org: int, entries: Iterable[int], precise_exits: bool = False,
+            smc_operands: Iterable[int] = (), hooks: Iterable[int] = ()) -> Tuple[Cfg, Dict[int, List[IrOp]]]:
+    cfg = build_cfg(image, org, entries, smc_operands, hooks)
     ops = {s: lift(cfg.blocks[s].insns) for s in cfg.starts}
     cfg_liveness(cfg, ops, precise_exits)
     return cfg, ops

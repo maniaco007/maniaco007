@@ -12,6 +12,6 @@ Interpretador **no PC** (nunca vai para o 3DO). Dois papéis:
 Também carrega a imagem de boot do Lynx **fornecida pelo usuário** (não distribuída aqui).
 Escopo mínimo: só o necessário para trace e testes (decisão D9).
 
-**v0.3.0:** `lynxtrace/core65c02.py` — oráculo de 49 opcodes (LDA/STA/ADC/SBC + Bcc/BRA/JMP/JSR/RTS), escrito de forma
-independente do tradutor (tabela derivada do padrão de bits; desvios por `xxy10000`). `run_program()` executa imagens com a
+**v0.4.0:** `lynxtrace/core65c02.py` — oráculo de 178 opcodes, escrito de forma independente do tradutor (grupos regulares
+derivados do padrão de bits `aaabbbcc`; desvios por `xxy10000`; ciclos por regras). `run_program()` executa imagens com a
 mesma regra de parada em fronteira de bloco do código traduzido. Perfil dinâmico (`trace.bin`): a fazer.

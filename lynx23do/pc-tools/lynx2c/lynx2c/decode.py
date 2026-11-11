@@ -35,8 +35,9 @@ class Insn:
     cycles: int
     page_cross: bool
     sem: str
-    flow: str = "seq"
+    flow: str = "seq"        # seq | branch | jump | jump_ind | call | ret | brk
     target: Optional[int] = None   # alvo ESTÁTICO (branch/BRA/JMP abs/JSR); None se dinâmico
+    smc: bool = False              # operando modificado em execução (política param_operand): lido da RAM a cada vez
 
     @property
     def next_addr(self):
@@ -44,11 +45,15 @@ class Insn:
 
     def text(self):
         o, m = self.operand, self.mode
-        if m == "imp":
+        if m in ("imp", "brk"):
             return self.mnemonic
+        if m == "acc":
+            return self.mnemonic + " A"
         if m == "rel":
             return "%s $%04X" % (self.mnemonic, self.target)
-        fmt = {"imm": "#$%02X", "zp": "$%02X", "zpx": "$%02X,X", "abs": "$%04X",
+        if m == "imm" and self.smc:
+            return "%s #<SMC>" % self.mnemonic
+        fmt = {"imm": "#$%02X", "zp": "$%02X", "zpx": "$%02X,X", "zpy": "$%02X,Y", "abs": "$%04X",
                "absx": "$%04X,X", "absy": "$%04X,Y", "izx": "($%02X,X)",
                "izy": "($%02X),Y", "izp": "($%02X)", "ind": "($%04X)", "iax": "($%04X,X)"}[m]
         return "%s %s" % (self.mnemonic, fmt % o)

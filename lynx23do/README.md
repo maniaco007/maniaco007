@@ -6,10 +6,11 @@ Framework para portar jogos selecionados de Atari Lynx para rodar **nativamente*
 - **Recompilação estática (AOT)** do 65C02 → C89 (sem interpretador em tempo de execução);
 - **HLE do Suzy**: SCBs de sprite viram Cels e são desenhados por `DrawCels()`.
 
-**Estágio atual: v0.3.0 — arquitetura aprovada (D1–D9); tradutor com 49 opcodes: LDA, STA, ADC, SBC +
-fluxo de controle (Bcc, BRA, JMP, JSR, RTS), CFG, vivacidade de flags entre blocos e trampolim `lx_run`;
-verificado por teste diferencial (blocos e programas) e teste de mutação.**
-Ainda sem o restante do conjunto 65C02, sem perfil dinâmico (lynxtrace) e sem Cel Engine (de propósito).
+**Estágio atual: v0.4.0 — arquitetura aprovada (D1–D9); tradutor com 178 opcodes (todos os NMOS documentados + extensões
+65C02 de uso comum), CFG, flags entre blocos, trampolim `lx_run`, SMC de operando imediato e hooks. As suítes funcionais
+independentes de Klaus Dormann (6502 e 65C02 estendida) PASSAM pelo pipeline completo (96,7 M e 67,1 M de ciclos),
+com 5 trechos dispensados por hook (docs/08 §3).** Ainda sem perfil dinâmico (lynxtrace), sem ciclos verificados por
+fonte independente e sem Cel Engine (de propósito).
 
 ## Leia nesta ordem
 1. [`docs/01-visao-geral-e-fluxo-de-dados.md`](docs/01-visao-geral-e-fluxo-de-dados.md) — modelo mental ROM → `.iso`
@@ -19,6 +20,7 @@ Ainda sem o restante do conjunto 65C02, sem perfil dinâmico (lynxtrace) e sem C
 5. [`docs/05-riscos-e-decisoes-abertas.md`](docs/05-riscos-e-decisoes-abertas.md) — decisões D1–D9 (aprovadas) e riscos
 6. [`docs/06-traducao-lda-sta-adc-sbc.md`](docs/06-traducao-lda-sta-adc-sbc.md) — primeiro tradutor e o que os testes provam
 7. [`docs/07-fluxo-de-controle.md`](docs/07-fluxo-de-controle.md) — CFG, JSR/RTS, flags entre blocos, mutação
+8. [`docs/08-conjunto-65c02-e-validacao-independente.md`](docs/08-conjunto-65c02-e-validacao-independente.md) — 178 opcodes, Dormann, limites
 
 ## Estrutura
 ```
@@ -48,7 +50,8 @@ Fora deste diretório (raiz do repositório):
 ```
 lynx23do/scripts/check_headers.sh          # headers em C89 estrito (gcc), configs host e 3DO
 scripts/check_backups_immutable.sh         # backups/ só recebe adições
-lynx23do/pc-tools/tests/run_diff.sh        # 55 unitários + diferencial (557 mil vetores de blocos + 9,7 mil de programas, -O0/-O2)
+lynx23do/pc-tools/tests/run_diff.sh        # 76 unitários + diferencial (895 mil vetores de blocos + 10 mil de programas, -O0/-O2)
+lynx23do/pc-tools/tests/functional/run_dormann.sh   # suítes de Klaus Dormann (baixa e confere SHA-256; precisa de rede)
 ```
 O armcc/SDK 3DO **não** está disponível neste ambiente; a compatibilidade com o SDK
 (assinaturas e formatos do CCB) está marcada `[VERIFY]` nos headers.

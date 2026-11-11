@@ -82,8 +82,8 @@ def _ea_lines(insn, ctx: _Ctx, with_page_cross: bool) -> List[str]:
     """Calcula o endereço efetivo em 'ea' para modos não-estáticos (com wrap correto)."""
     mode, o = insn.mode, insn.operand
     ctx.ea = True
-    if mode == "zpx":
-        return ["ea = (0x%02X + cpu->x) & 0xFF;" % o]
+    if mode in ("zpx", "zpy"):
+        return ["ea = (0x%02X + cpu->%s) & 0xFF;" % (o, "x" if mode == "zpx" else "y")]
     if mode in ("absx", "absy"):
         reg = "x" if mode == "absx" else "y"
         lines = ["ea = (0x%04X + cpu->%s) & 0xFFFF;" % (o, reg)]
@@ -108,14 +108,16 @@ def _read_operand(insn, ctx: _Ctx) -> List[str]:
     ctx.m = True
     mode, o = insn.mode, insn.operand
     if mode == "imm":
+        if insn.smc:                                  # param_operand: operando lido da RAM a cada execução
+            return ["m = lx_rd8(0x%04X);   /* operando auto-modificável */" % ((insn.addr + 1) & 0xFFFF)]
         return ["m = 0x%02X;" % o]
     if mode == "zp":
         return ["m = lx_ram[0x%02X];" % o]
     if mode == "abs":
         return ["m = %s;" % _static_read(o)]
-    if mode == "zpx":
+    if mode in ("zpx", "zpy"):
         lines = _ea_lines(insn, ctx, insn.page_cross)
-        return lines + ["m = lx_ram[ea];"]          # zp,X: ea já está em 0..255
+        return lines + ["m = lx_ram[ea];"]          # zp,X / zp,Y: ea já está em 0..255
     return _ea_lines(insn, ctx, insn.page_cross) + ["m = lx_rd8(ea);"]
 
 
@@ -125,9 +127,92 @@ def _write_operand(insn, val: str, ctx: _Ctx) -> List[str]:
         return ["lx_ram[0x%02X] = %s;" % (o, val)]
     if mode == "abs":
         return [_static_write(o, val)]
-    if mode == "zpx":
+    if mode in ("zpx", "zpy"):
         return _ea_lines(insn, ctx, False) + ["lx_ram[ea] = %s;" % val]
     return _ea_lines(insn, ctx, False) + ["lx_wr8(ea, %s);" % val]
+
+
+def _store_after_read(insn, val: str) -> List[str]:
+    """RMW: escreve 'val' no MESMO endereço já lido (o 'ea' dos modos dinâmicos já foi calculado)."""
+    mode, o = insn.mode, insn.operand
+    if mode == "zp":
+        return ["lx_ram[0x%02X] = %s;" % (o, val)]
+    if mode == "abs":
+        return [_static_write(o, val)]
+    if mode in ("zpx", "zpy"):
+        return ["lx_ram[ea] = %s;" % val]
+    return ["lx_wr8(ea, %s);" % val]
+
+
+_REG = {"lda": "a", "ldx": "x", "ldy": "y", "sta": "a", "stx": "x", "sty": "y",
+        "cmp": "a", "cpx": "x", "cpy": "y"}
+_TRANSFER = {"tax": ("x", "a"), "tay": ("y", "a"), "txa": ("a", "x"), "tya": ("a", "y"),
+             "tsx": ("x", "s"), "txs": ("s", "x")}
+_FLAGSET = {"clc": "cpu->c = 0;", "sec": "cpu->c = 1;", "clv": "cpu->v = 0;",
+            "cld": "cpu->d = 0;", "sed": "cpu->d = 1;", "cli": "cpu->i = 0;", "sei": "cpu->i = 1;"}
+
+
+def _emit_rmw(op: IrOp, ctx: _Ctx) -> List[str]:
+    """INC DEC ASL LSR ROL ROR (acumulador ou memória): leitura única, escrita única."""
+    insn, live, sem = op.insn, op.live_defs, op.sem
+    ctx.t = ctx.m = True
+    L = ["m = cpu->a;"] if insn.mode == "acc" else _read_operand(insn, ctx)
+    carry = None
+    if sem == "inc":
+        L.append("t = (m + 1) & 0xFF;")
+    elif sem == "dec":
+        L.append("t = (m - 1) & 0xFF;")
+    elif sem == "asl":
+        L.append("t = (m << 1) & 0xFF;")
+        carry = "(m >> 7) & 1"
+    elif sem == "lsr":
+        L.append("t = m >> 1;")
+        carry = "m & 1"
+    elif sem == "rol":
+        L.append("t = ((m << 1) | cpu->c) & 0xFF;")      # usa o C ANTIGO: calcular t antes de atualizar C
+        carry = "(m >> 7) & 1"
+    else:  # ror
+        L.append("t = (m >> 1) | ((lx_u32)cpu->c << 7);")
+        carry = "m & 1"
+    if carry and "C" in live:
+        L.append("cpu->c = (lx_u8)(%s);" % carry)
+    if sem == "lsr":                                       # N = 0 sempre
+        if "N" in live:
+            L.append("cpu->nsrc = 0;")
+        if "Z" in live:
+            L.append("cpu->zsrc = (lx_u8)t;")
+    else:
+        L += _set_nz(live, "(lx_u8)t")
+    if insn.mode == "acc":
+        L.append("cpu->a = (lx_u8)t;")
+    else:
+        L += _store_after_read(insn, "(lx_u8)t")
+    return L
+
+
+def _emit_implied(op: IrOp, ctx: _Ctx) -> List[str]:
+    sem, live = op.sem, op.live_defs
+    if sem in ("inx", "iny", "dex", "dey"):
+        reg = sem[2]
+        return ["cpu->%s = (lx_u8)(cpu->%s %s 1);" % (reg, reg, "+" if sem[1] == "n" else "-")] + \
+            _set_nz(live, "cpu->%s" % reg)
+    if sem in _TRANSFER:
+        dst, src = _TRANSFER[sem]
+        return ["cpu->%s = cpu->%s;" % (dst, src)] + _set_nz(live, "cpu->%s" % dst)
+    if sem in _FLAGSET:
+        return [_FLAGSET[sem]]
+    if sem == "nop":
+        return []
+    if sem in ("pha", "phx", "phy"):
+        return ["lx_push8(&cpu->s, cpu->%s);" % {"pha": "a", "phx": "x", "phy": "y"}[sem]]
+    if sem == "php":
+        return ["lx_push8(&cpu->s, (lx_u8)(lx_cpu_pack_p(cpu) | 0x10));   /* B=1 no P empilhado */"]
+    if sem in ("pla", "plx", "ply"):
+        reg = {"pla": "a", "plx": "x", "ply": "y"}[sem]
+        return ["cpu->%s = lx_pull8(&cpu->s);" % reg] + _set_nz(live, "cpu->%s" % reg)
+    if sem == "plp":
+        return ["lx_cpu_unpack_p(cpu, lx_pull8(&cpu->s));", "cpu->b = 0;   /* PLP/RTI ignoram o bit B */"]
+    raise AssertionError("implícita não suportada: %s" % sem)
 
 
 def _set_nz(live, src: str) -> List[str]:
@@ -169,10 +254,52 @@ def _emit_op(op: IrOp, ctx: _Ctx) -> List[str]:
         L.append("    cpu->a = (lx_u8)t;")
         L += ["    " + s for s in _set_nz(live, "cpu->a")]
         L.append("}")
+    elif op.sem in ("lda", "ldx", "ldy"):
+        L += _read_operand(insn, ctx)
+        L.append("cpu->%s = (lx_u8)m;" % _REG[op.sem])
+        L += _set_nz(live, "cpu->%s" % _REG[op.sem])
+    elif op.sem in ("sta", "stx", "sty"):
+        L += _write_operand(insn, "cpu->%s" % _REG[op.sem], ctx)
+    elif op.sem == "stz":
+        L += _write_operand(insn, "0", ctx)
+    elif op.sem in ("ora", "and", "eor"):
+        L += _read_operand(insn, ctx)
+        L.append("cpu->a = (lx_u8)(cpu->a %s m);" % {"ora": "|", "and": "&", "eor": "^"}[op.sem])
+        L += _set_nz(live, "cpu->a")
+    elif op.sem in ("cmp", "cpx", "cpy"):
+        reg = _REG[op.sem]
+        L += _read_operand(insn, ctx)
+        if not live:
+            L.append("(void)m;")                         # leitura mantida (efeito colateral de E/S)
+        if "N" in live or "Z" in live:
+            ctx.t = True
+            L.append("t = ((lx_u32)cpu->%s - m) & 0xFF;" % reg)
+        if "C" in live:
+            L.append("cpu->c = (lx_u8)(cpu->%s >= m);" % reg)
+        L += _set_nz(live, "(lx_u8)t")
+    elif op.sem in ("bit", "bit_imm"):
+        L += _read_operand(insn, ctx)
+        if not live:
+            L.append("(void)m;")
+        if "Z" in live:
+            L.append("cpu->zsrc = (lx_u8)(cpu->a & m);")
+        if "N" in live:
+            L.append("cpu->nsrc = (lx_u8)m;")
+        if "V" in live:
+            L.append("cpu->v = (lx_u8)((m >> 6) & 1);")
+    elif op.sem in ("inc", "dec", "asl", "lsr", "rol", "ror"):
+        L += _emit_rmw(op, ctx)
+    elif op.sem in ("tsb", "trb"):
+        ctx.t = True
+        L += _read_operand(insn, ctx)
+        if "Z" in live:
+            L.append("cpu->zsrc = (lx_u8)(cpu->a & m);")
+        L.append("t = %s;" % ("m | cpu->a" if op.sem == "tsb" else "m & ~(lx_u32)cpu->a & 0xFF"))
+        L += _store_after_read(insn, "(lx_u8)t")
     elif insn.flow != "seq":
         L += _emit_terminator(op, ctx)
     else:
-        raise AssertionError("semântica não suportada: %s" % op.sem)
+        L += _emit_implied(op, ctx)
     return L
 
 
@@ -204,6 +331,16 @@ def _emit_terminator(op: IrOp, ctx: _Ctx) -> List[str]:
     if sem == "rts":
         ctx.t = True
         return ["t = lx_pull8(&cpu->s);", "t |= (lx_u32)lx_pull8(&cpu->s) << 8;", "pc = (t + 1) & 0xFFFF;"]
+    if sem == "brk":
+        ret = insn.next_addr                    # BRK tem 2 bytes: empilha addr+2 (RTI NÃO soma 1)
+        return ["lx_push8(&cpu->s, 0x%02X);" % (ret >> 8), "lx_push8(&cpu->s, 0x%02X);" % (ret & 0xFF),
+                "lx_push8(&cpu->s, (lx_u8)(lx_cpu_pack_p(cpu) | 0x10));   /* B=1 */",
+                "cpu->i = 1;", "cpu->d = 0;       /* 65C02: BRK limpa D */",
+                "pc = lx_rd16(0xFFFE);"]
+    if sem == "rti":
+        ctx.t = True
+        return ["lx_cpu_unpack_p(cpu, lx_pull8(&cpu->s));", "cpu->b = 0;",
+                "t = lx_pull8(&cpu->s);", "t |= (lx_u32)lx_pull8(&cpu->s) << 8;", "pc = t & 0xFFFF;"]
     raise AssertionError("terminador não suportado: %s" % sem)
 
 

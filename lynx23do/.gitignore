@@ -18,3 +18,4 @@ roms/
 # Traces e logs de execução
 trace.bin
 unresolved.log
+*.lst

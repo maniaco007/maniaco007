@@ -102,7 +102,7 @@ class TestCyclesAndModes(unittest.TestCase):
         self.assertEqual(r.mem.io_writes, [(0xFC91, r.a)])
 
     def test_opcode_table_shape(self):
-        self.assertEqual(len(REF_OPS), 49)   # 35 sequenciais + 14 de fluxo
+        self.assertEqual(len(REF_OPS), 178)
 
 
 class TestControlFlow(unittest.TestCase):
@@ -159,6 +159,96 @@ class TestControlFlow(unittest.TestCase):
         r = RefCpu(RefMem())
         self.assertEqual(r.run_program(bytes([0x4C, 0x00, 0x90]), 0x300, {0x300}, 0x300, 100),
                          ("unresolved", 0x9000))
+
+
+class TestExtendedSet(unittest.TestCase):
+    """Semântica do conjunto estendido verificada contra aritmética Python elementar / valores à mão."""
+
+    def cpu(self, **regs):
+        r = RefCpu(RefMem(preset=regs.pop("mem", {})))
+        for k, v in regs.items():
+            setattr(r, k, v)
+        return r
+
+    def test_cmp_exhaustive(self):
+        for reg in range(256):
+            for m in range(256):
+                r = self.cpu(a=reg); r._compare(reg, m)
+                self.assertEqual(r.c, 1 if reg >= m else 0)
+                self.assertEqual(r.z, 1 if reg == m else 0)
+                self.assertEqual(r.n, ((reg - m) & 0xFF) >> 7)
+
+    def test_shifts_exhaustive(self):
+        for v in range(256):
+            for c in (0, 1):
+                r = self.cpu(c=c); out = r._rmw("ASL", v)
+                self.assertEqual((out, r.c), ((v << 1) & 0xFF, v >> 7))
+                r = self.cpu(c=c); out = r._rmw("LSR", v)
+                self.assertEqual((out, r.c, r.n), (v >> 1, v & 1, 0))
+                r = self.cpu(c=c); out = r._rmw("ROL", v)
+                self.assertEqual((out, r.c), (((v << 1) | c) & 0xFF, v >> 7))
+                r = self.cpu(c=c); out = r._rmw("ROR", v)
+                self.assertEqual((out, r.c), ((v >> 1) | (c << 7), v & 1))
+                for mn, d in (("INC", 1), ("DEC", -1)):
+                    r = self.cpu(); out = r._rmw(mn, v)
+                    self.assertEqual((out, r.z, r.n), ((v + d) & 0xFF, 1 if out == 0 else 0, out >> 7))
+
+    def test_cmp_examples(self):
+        for imm, (z, c, n) in {5: (1, 1, 0), 6: (0, 0, 1), 4: (0, 1, 0)}.items():
+            r = self.cpu(a=5); r.exec_insn(0xC9, imm)
+            self.assertEqual((r.z, r.c, r.n), (z, c, n))
+
+    def test_bit_immediate_only_changes_z(self):
+        r = self.cpu(a=0x0F, n=1, v=1); r.exec_insn(0x89, 0xF0)
+        self.assertEqual((r.z, r.n, r.v), (1, 1, 1))
+        r = self.cpu(a=0x0F, mem={0x10: 0xC0}); r.exec_insn(0x24, 0x10)       # BIT zp copia bits 7 e 6
+        self.assertEqual((r.z, r.n, r.v), (1, 1, 1))
+
+    def test_tsb_trb(self):
+        r = self.cpu(a=0x0F, mem={0x10: 0x3C}); r.exec_insn(0x04, 0x10)
+        self.assertEqual((r.z, r.mem.written[0x10]), (0, 0x3F))
+        r = self.cpu(a=0x0F, mem={0x10: 0x3C}); r.exec_insn(0x14, 0x10)
+        self.assertEqual((r.z, r.mem.written[0x10]), (0, 0x30))
+        r = self.cpu(a=0x0F, mem={0x10: 0xF0}); r.exec_insn(0x04, 0x10)
+        self.assertEqual(r.z, 1)
+
+    def test_php_plp_b_flag(self):
+        r = self.cpu(c=1, z=1, s=0xFF); r.exec_insn(0x08, None)               # PHP
+        self.assertEqual(r.mem.written[0x1FF], 0x20 | 0x10 | 0x02 | 0x01)     # bits 5 e 4 (B) sempre 1 no push
+        r = self.cpu(s=0xFE, mem={0x1FF: 0xFF}); r.exec_insn(0x28, None)      # PLP de $FF
+        self.assertEqual((r.pack_p(), r.b), (0xEF, 0))                       # B ignorado ao desempilhar
+
+    def test_brk_and_rti(self):
+        r = self.cpu(s=0xFF, c=1, z=1, d=1, mem={0xFFFE: 0x34, 0xFFFF: 0x12})
+        r.exec_flow("BRK", "brk", 0xAA, 0x0300)
+        self.assertEqual((r.pc, r.s, r.i, r.d, r.cycles), (0x1234, 0xFC, 1, 0, 7))
+        self.assertEqual(r.mem.written, {0x1FF: 0x03, 0x1FE: 0x02, 0x1FD: 0x20 | 0x10 | 0x08 | 0x02 | 0x01})
+        r.exec_flow("RTI", "imp", None, 0x1234)
+        self.assertEqual((r.pc, r.s, r.d, r.i, r.b, r.cycles), (0x0302, 0xFF, 1, 0, 0, 13))   # sem +1; P restaurado
+
+    def test_inc_dec_absx_fixed_seven_shifts_page_cross(self):
+        r = self.cpu(x=1, mem={0x1300: 5}); r.run(bytes([0xFE, 0xFF, 0x12]))   # INC $12FF,X
+        self.assertEqual(r.cycles, 7)
+        r = self.cpu(x=1, mem={0x1300: 5}); r.run(bytes([0x1E, 0xFF, 0x12]))   # ASL $12FF,X (cruza)
+        self.assertEqual(r.cycles, 7)
+        r = self.cpu(x=1, mem={0x1210: 5}); r.run(bytes([0x1E, 0x0F, 0x12]))   # ASL $120F,X (não cruza)
+        self.assertEqual(r.cycles, 6)
+
+    def test_zero_page_y_wraps(self):
+        r = self.cpu(y=2, mem={0x01: 0x99}); r.run(bytes([0xB6, 0xFF]))       # LDX $FF,Y -> $01
+        self.assertEqual(r.x, 0x99)
+
+    def test_transfers_and_stack_pointer(self):
+        r = self.cpu(a=0x80); r.run(bytes([0xAA, 0xA8]))                      # TAX, TAY
+        self.assertEqual((r.x, r.y, r.n, r.z), (0x80, 0x80, 1, 0))
+        r = self.cpu(x=0x00, s=0x55); r.run(bytes([0x9A]))                    # TXS não toca flags
+        self.assertEqual((r.s, r.z, r.n), (0x00, 0, 0))
+        r = self.cpu(s=0x00); r.run(bytes([0xBA]))                            # TSX
+        self.assertEqual((r.x, r.z), (0, 1))
+
+    def test_stz_and_nop(self):
+        r = self.cpu(); r.run(bytes([0x64, 0x10, 0xEA]))
+        self.assertEqual((r.mem.written, r.cycles), ({0x10: 0}, 5))
 
 
 if __name__ == "__main__":

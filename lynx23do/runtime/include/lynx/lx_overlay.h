@@ -34,7 +34,7 @@ typedef struct LxDispatchEntry {
 typedef struct LxOverlay {
     lx_u16  id;
     lx_u16  load_addr;          /* onde o conteúdo reside na RAM Lynx           */
-    lx_u16  size;               /* bytes (<= 65536 - load_addr)                  */
+    lx_u32  size;               /* bytes (<= 65536 - load_addr; u32 p/ caber 65536 em imagens de teste) */
     lx_u16  n_entries;
     lx_u32  cart_offset;        /* offset do conteúdo na imagem do cartucho     */
     lx_u32  content_crc32;      /* checagem opcional (LX_DEBUG) do que foi carregado */

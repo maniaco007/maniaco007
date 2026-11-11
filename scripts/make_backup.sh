@@ -34,9 +34,10 @@ if [ -e "$DEST" ]; then
 fi
 
 mkdir -p "$DEST/snapshot"
-# Cópia integral da árvore de trabalho (inclui arquivos não versionados),
-# exceto .git (histórico já preservado pelo git) e backups (evita recursão).
-tar --exclude=./.git --exclude=./backups -cf - . | tar -xf - -C "$DEST/snapshot"
+# Cópia integral da árvore de trabalho (inclui arquivos não versionados), exceto:
+#   .git (histórico já preservado pelo git), backups (evita recursão) e saídas REGENERÁVEIS
+#   (diretórios "build" e "__pycache__" — saída de ferramentas, podem ter dezenas de MB).
+tar --exclude=./.git --exclude=./backups --exclude=build --exclude=__pycache__ -cf - . | tar -xf - -C "$DEST/snapshot"
 
 cat > "$DEST/README.md" <<EOF
 # Backup ${TS} — ${VERSAO}
@@ -45,7 +46,7 @@ cat > "$DEST/README.md" <<EOF
 - **Data/hora:** ${HUMAN}
 - **Versão/estágio:** ${VERSAO} (${SLUG})
 - **Branch / commit de origem:** \`${BRANCH}\` @ \`${COMMIT}\`
-- **Conteúdo:** \`snapshot/\` = cópia integral da árvore de trabalho (exceto \`.git/\` e \`backups/\`)
+- **Conteúdo:** \`snapshot/\` = cópia integral da árvore de trabalho (exceto \`.git/\`, \`backups/\` e saídas regeneráveis \`build/\` e \`__pycache__/\`)
 
 ## Resumo do progresso e funcionalidades implementadas até este ponto
 ${RESUMO}

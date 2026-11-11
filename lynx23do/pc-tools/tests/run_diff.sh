@@ -2,7 +2,8 @@
 # Teste diferencial: lynx2c -> C89 -> gcc (host)  vs.  núcleo de referência (lynxtrace).
 # Compila o C gerado com -std=c89 -pedantic -Wall -Wextra -Werror em -O0 e -O2.
 # Uso: pc-tools/tests/run_diff.sh [outdir]      (padrão: <projeto>/build/test)
-# SKIP_UNIT=1 pula os unitários; SKIP_BLOCKS=1 pula o corpus de blocos retos (teste de mutação rápido).
+# SKIP_UNIT=1 pula os unitários; SKIP_BLOCKS=1 pula o corpus de blocos retos; LX_LITE=1 pula o corpus
+# EXAUSTIVO de imediatos; OPTS="-O0" compila só em -O0 (modos rápidos para teste de mutação).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PROJ="$(cd "$HERE/../.." && pwd)"
@@ -23,7 +24,7 @@ python3 "$HERE/gen_programs.py" "$OUT"
 echo "== 3/4 compilando (C89 estrito, -Werror)"
 INC="-I$PROJ/runtime/include"
 STRICT="-std=c89 -pedantic -Wall -Wextra -Werror"
-for O in -O0 -O2; do
+for O in ${OPTS:--O0 -O2}; do
   $CC $STRICT $O $INC -c "$PROJ/runtime/src/lx_mem.c" -o "$OUT/lx_mem$O.o"
   $CC $STRICT $O $INC -c "$HERE/harness/lx_test_stubs.c" -o "$OUT/stubs$O.o"
   if [ -z "${SKIP_BLOCKS:-}" ]; then
@@ -42,7 +43,7 @@ done
 
 echo "== 4/4 executando vetores"
 rc=0
-for O in -O0 -O2; do
+for O in ${OPTS:--O0 -O2}; do
   [ -z "${SKIP_BLOCKS:-}" ] && { echo "-- $O (blocos retos)"; "$OUT/harness$O" "$OUT/vectors.bin" || rc=$?; }
   echo "-- $O (programas)";      "$OUT/harness_prog$O" "$OUT/programs.bin" || rc=$?
 done

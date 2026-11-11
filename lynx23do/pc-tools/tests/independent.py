@@ -29,6 +29,8 @@ def independent_leaders(image, org, entries):
                 targets = [image[a - org + 1] | image[a - org + 2] << 8]
             elif mn == "JSR":
                 targets = [image[a - org + 1] | image[a - org + 2] << 8, nxt]
+            elif mn == "BRK":
+                targets = [nxt]                                    # continuação (RTI volta aqui)
             else:
                 targets = []                                  # JMP indireto, RTS
             for t in targets:

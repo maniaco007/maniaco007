@@ -1,0 +1,67 @@
+# manifest.toml — perfil de um jogo (esquema da v0.1.0; sujeito a revisão na aprovação)
+# Humano-no-laço: informa ao lynx2c o que a análise automática não consegue provar.
+# Endereços em hexadecimal 65C02 (16 bits). Nada aqui contém dados de ROM.
+
+[game]
+name        = "EXEMPLO"
+cart_sha256 = ""            # SHA-256 da imagem .lnx (amarra manifest <-> ROM)
+rotation    = "from_header" # from_header | none | left | right
+
+[boot]
+mode  = "boot-image"        # boot-image (comercial, cifrado) | bs93 (homebrew) | pre-decrypted
+entry = 0x0200              # entrada do 1º estágio após o boot
+
+[budget]                    # critério objetivo de elegibilidade (docs/04 §3)
+max_code_kb = 640
+max_data_kb = 384
+
+# ---- Overlays conhecidos (o trace os descobre; aqui só se corrige/nomeia) ------
+[[overlay]]
+id          = 0
+cart_offset = 0x00000
+load_addr   = 0x0200
+size        = 0x1000
+
+# ---- Entradas e vetores extras ----------------------------------------------------
+[[entry]]
+addr  = 0x0200
+label = "main"
+kind  = "routine"           # routine | irq | nmi | reset
+
+# ---- Tabelas de salto / RTS trick --------------------------------------------------
+[[jumptable]]
+addr  = 0x1200
+count = 8
+kind  = "split_lo_hi"       # split_lo_hi (tabelas lo/hi separadas) | word_pairs | rts_trick
+hi    = 0x1208
+
+# ---- Dados inline após JSR ----------------------------------------------------------
+[[inline_data_call]]
+callee     = 0x0450
+terminator = 0x00
+
+# ---- Código auto-modificável ---------------------------------------------------------
+[[smc]]
+addr   = 0x0321
+policy = "param_operand"    # param_operand | hook | forbid
+
+# ---- Hooks HLE: substituir rotinas do jogo por implementação nativa --------------------
+[[hook]]
+addr   = 0x0100
+kind   = "cart_load"        # cart_load | memcpy | memset | decompress | custom
+symbol = "lx_hle_cart_load"
+
+# ---- Modos do Suzy / vídeo (valores = constantes de lx_config.h) --------------------------
+[suzy]
+fb_mode      = "cel_only"   # cel_only | fb_under | soft
+collision    = "bbox"       # none | bbox | pixel
+sprite_sched = "deferred"   # deferred | immediate
+
+[video]
+scale     = 2               # LX_VIEW_SCALE
+letterbox = true
+
+# ---- Perfil dinâmico -----------------------------------------------------------------------
+[trace]
+replay = "replay/exemplo.inp"   # entradas gravadas (não versionar se grandes)
+frames = 20000

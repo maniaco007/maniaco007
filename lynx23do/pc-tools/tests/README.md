@@ -14,6 +14,7 @@ SKIP_UNIT=1 SKIP_BLOCKS=1 pc-tools/tests/run_diff.sh   # só programas (mutaçã
 | `independent.py` | líderes de bloco por algoritmo independente (oráculo do CFG) |
 | `gen_vectors.py` + `harness/main.c` | corpus de BLOCOS RETOS: 557 mil vetores |
 | `gen_programs.py` + `harness/main_prog.c` | corpus de PROGRAMAS (aleatórios + dirigidos) com o trampolim real: 9,7 mil vetores |
+| `functional/run_dormann.sh` + `run_functional.py` + `functional_main.c` | suítes funcionais **independentes** de Klaus Dormann pelo pipeline completo, com sementes iterativas (`docs/08` §3) |
 | `harness/lx_test_stubs.c` | E/S falsa por chip (valor próprio por chip + detecção de roteamento errado) e agendador de teste |
 
 Resultados, teste de mutação e limites: `docs/06` §3 e `docs/07` §5–6.

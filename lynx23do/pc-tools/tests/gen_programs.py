@@ -29,6 +29,7 @@ from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS, FLOW_MNEMONICS, BR_COND
 
 OPC = {v: k for k, v in REF_OPS.items()}                      # (mn, mode) -> opcode
 SEQ = sorted(v for v in REF_OPS.values() if v[0] not in FLOW_MNEMONICS)
+X_WRITERS = {"LDX", "TAX", "TSX", "INX", "DEX", "PLX"}        # mudam X: incompatíveis com JMP (abs,X) de tabela fixa
 BRANCHES = sorted(BR_COND)
 EDGE = [0x00, 0x01, 0x0A, 0x0F, 0x10, 0x7F, 0x80, 0x99, 0xFE, 0xFF]
 
@@ -74,26 +75,34 @@ def random_program(rng):
     org = rng.choice([rng.randrange(0x0200, 0xE000), 0x12E0 + rng.randrange(0x20), 0x00F0 + rng.randrange(0x10),
                       0xFBF0 + rng.randrange(8)])
     n = rng.randrange(8, 48)
+    iax_prog = rng.random() < 0.10                 # só estes usam JMP (abs,X) e, então, não podem alterar X
+    seq_pool = [v for v in SEQ if v[0] not in X_WRITERS] if iax_prog else SEQ
     kinds = []
     for _ in range(n):
         r = rng.random()
-        if r < 0.50:
-            kinds.append(("seq", rng.choice(SEQ)))
+        if r < 0.52:
+            kinds.append(("seq", rng.choice(seq_pool)))
         elif r < 0.72:
             kinds.append(("br", rng.choice(BRANCHES)))
         elif r < 0.76:
             kinds.append(("bra", None))
         elif r < 0.81:
             kinds.append(("jmp", None))
-        elif r < 0.88:
+        elif r < 0.87:
             kinds.append(("jsr", None))
-        elif r < 0.94:
+        elif r < 0.91:
             kinds.append(("rts", None))
+        elif r < 0.93:
+            kinds.append(("rti", None))
+        elif r < 0.95:
+            kinds.append(("brk", None))
         elif r < 0.97:
             kinds.append(("jind", None))
         else:
-            kinds.append(("jiax", None))
-    lens = [_LEN[v[1]] if k == "seq" else {"br": 2, "bra": 2, "jmp": 3, "jsr": 3, "rts": 1, "jind": 3, "jiax": 3}[k]
+            kinds.append(("jiax" if iax_prog else "jind", None))
+    if iax_prog and not any(k == "jiax" for k, _ in kinds):
+        kinds[rng.randrange(len(kinds))] = ("jiax", None)
+    lens = [_LEN[v[1]] if k == "seq" else {"br": 2, "bra": 2, "jmp": 3, "jsr": 3, "rts": 1, "rti": 1, "brk": 2, "jind": 3, "jiax": 3}[k]
             for k, v in kinds]
     starts, a = [], org
     for L in lens:
@@ -104,6 +113,12 @@ def random_program(rng):
         return None
     seeds, preset, has_iax = set(), {}, False
     code = bytearray()
+    # param_operand: ~35% dos programas marcam operandos imediatos como modificáveis e algumas escritas
+    # absolutas passam a mirá-los (o operando é então lido da RAM a cada execução)
+    smc_addrs = []
+    if rng.random() < 0.35:
+        smc_addrs = [starts[i] + 1 for i, (k, v) in enumerate(kinds) if k == "seq" and v[1] == "imm" and rng.random() < 0.6]
+    WRITERS = {"STA", "STX", "STY", "STZ", "INC", "DEC", "ASL", "LSR", "ROL", "ROR", "TSB", "TRB"}
 
     def external():
         while True:
@@ -117,10 +132,14 @@ def random_program(rng):
             mn, mode = v
             if mode == "imm":
                 code += bytes([OPC[v], rv(rng)])
+            elif _LEN[mode] == 1:
+                code.append(OPC[v])
             elif _LEN[mode] == 2:
                 code += bytes([OPC[v], rng.choice([0x00, 0x01, 0xFE, 0xFF, rng.randrange(256)])])
             else:
                 x = rng.choice([rng.randrange(0xFC00), rng.randrange(0xFC00, 0x10000), 0xFBFF, 0xFC00, 0xFE00])
+                if smc_addrs and mode == "abs" and mn in WRITERS and rng.random() < 0.6:
+                    x = rng.choice(smc_addrs)                 # esta escrita modifica um operando imediato
                 code += bytes([OPC[v], x & 0xFF, x >> 8])
         elif k in ("br", "bra"):
             nxt = a + 2
@@ -134,6 +153,13 @@ def random_program(rng):
             code += bytes([OPC[("JMP" if k == "jmp" else "JSR", "abs")], tgt & 0xFF, tgt >> 8])
         elif k == "rts":
             code.append(OPC[("RTS", "imp")])
+        elif k == "rti":
+            code.append(OPC[("RTI", "imp")])
+        elif k == "brk":
+            h = rng.choice(starts)                          # handler no vetor IRQ/BRK ($FFFE)
+            seeds.add(h)
+            preset[0xFFFE], preset[0xFFFF] = h & 0xFF, h >> 8
+            code += bytes([OPC[("BRK", "brk")], rng.randrange(256)])
         elif k == "jind":
             cell = rng.randrange(0x0200, 0xEFF0)
             if org <= cell < end or org <= cell + 1 < end:
@@ -152,8 +178,10 @@ def random_program(rng):
                 seeds.add(tgt)
                 preset[base + 2 * j], preset[base + 2 * j + 1] = tgt & 0xFF, tgt >> 8
             code += bytes([OPC[("JMP", "iax")], base & 0xFF, base >> 8])
+    for a in smc_addrs:                                   # valor inicial do operando = byte da imagem
+        preset[a] = code[a - org]
     return dict(org=org, code=bytes(code), seeds=seeds, preset=preset, x_choices=[0, 2, 4, 6] if has_iax else None,
-                s_choices=None)
+                s_choices=None, smc=set(smc_addrs))
 
 
 # ---------------------------------------------------------------- programas dirigidos
@@ -209,6 +237,38 @@ def directed_programs():
         pre[0x2000 + 2 * j], pre[0x2001 + 2 * j] = L[nm] & 0xFF, L[nm] >> 8
     P.append(dict(name="jmp_iax", org=0x0700, code=code, seeds={L[n] for n in ("d0", "d1", "d2", "d3")},
                   preset=pre, x_choices=[0, 2, 4, 6], s_choices=None, budget=[30, 200]))
+    # 7. BRK -> handler -> RTI (volta em addr+2) com P empilhado com B=1
+    code, L = assemble(0x0800, [("SEC", "imp"), ("LDA", "imm", 1), ("BRK", "brk", 0xAB), ("ADC", "imm", 1),
+                                ("STA", "zp", 0x10), ("BRA", "rel", "fim"), ("L", "h"), ("INC", "zp", 0x20),
+                                ("PHP", "imp"), ("PLA", "imp"), ("STA", "zp", 0x21), ("RTI", "imp"),
+                                ("L", "fim"), ("BRA", "rel", "fim")])
+    P.append(dict(name="brk_rti", org=0x0800, code=code, seeds={L["h"]},
+                  preset={0xFFFE: L["h"] & 0xFF, 0xFFFF: L["h"] >> 8}, x_choices=None, s_choices=None,
+                  budget=[20, 60, 400]))
+    # 8. laço com X e pilha (PHA/PLA/PHP/PLP/TXS/TSX)
+    code, L = assemble(0x0900, [("LDX", "imm", 5), ("L", "a"), ("TXA", "imp"), ("PHA", "imp"), ("DEX", "imp"),
+                                ("BNE", "rel", "a"), ("LDX", "imm", 5), ("L", "b"), ("PLA", "imp"), ("ADC", "imm", 3),
+                                ("DEX", "imp"), ("BNE", "rel", "b"), ("TSX", "imp"), ("STX", "zp", 0x30),
+                                ("PHP", "imp"), ("PLP", "imp"), ("RTS", "imp")])
+    P.append(dict(name="pilha_laco_x", org=0x0900, code=code, seeds=set(), preset={}, x_choices=None,
+                  s_choices=[0xFF, 0x08, 0x02], budget=[30, 120, 700]))
+    # 9. deslocamentos e BIT/TSB/TRB sobre memória e acumulador
+    code, L = assemble(0x0A00, [("LDA", "zp", 0x40), ("ASL", "acc"), ("ROL", "zp", 0x41), ("LSR", "abs", 0x2000),
+                                ("ROR", "zpx", 0x42), ("INC", "absx", 0x20FF), ("DEC", "acc"), ("BIT", "zp", 0x43),
+                                ("TSB", "zp", 0x44), ("TRB", "abs", 0x2001), ("CMP", "izy", 0x50),
+                                ("BCS", "rel", "e"), ("ORA", "imm", 0x80), ("EOR", "izx", 0x52), ("L", "e"),
+                                ("STZ", "absx", 0x2100), ("BRA", "rel", "e")])
+    P.append(dict(name="shifts_bit_rmw", org=0x0A00, code=code, seeds=set(), preset={}, x_choices=None,
+                  s_choices=None, budget=[40, 200]))
+    # 10. SMC de operando imediato: STA/INC sobre o operando do ADC # e do SBC # (param_operand)
+    items = lambda ao, so: [("LDA", "imm", 0x07), ("STA", "abs", ao), ("L", "adc"), ("ADC", "imm", 0x00),
+                            ("STA", "zp", 0x10), ("INC", "abs", ao), ("L", "sbc"), ("SBC", "imm", 0x00),
+                            ("STA", "abs", so), ("DEC", "abs", ao), ("STA", "zp", 0x11), ("BRA", "rel", "adc")]
+    _, L0 = assemble(0x0B00, items(0, 0))
+    ao, so = L0["adc"] + 1, L0["sbc"] + 1
+    code, L = assemble(0x0B00, items(ao, so))
+    P.append(dict(name="smc_imediato", org=0x0B00, code=code, seeds=set(), preset={ao: code[ao - 0x0B00], so: code[so - 0x0B00]},
+                  x_choices=None, s_choices=None, budget=[30, 120, 600], smc={ao, so}))
     return P
 
 
@@ -220,7 +280,7 @@ class Corpus:
 
     def add_program(self, prog, nvec):
         entries = [prog["org"]] + sorted(prog["seeds"])
-        cfg, ops = analyze(prog["code"], prog["org"], entries, prog.get("precise", False))
+        cfg, ops = analyze(prog["code"], prog["org"], entries, prog.get("precise", False), prog.get("smc", ()))
         # a referência para onde o TRADUTOR para: garantir que os líderes dele são os corretos
         want = independent_leaders(prog["code"], prog["org"], entries)
         assert set(cfg.blocks) == want, "líderes do CFG divergem do algoritmo independente: %s" % sorted(
@@ -248,7 +308,7 @@ class Corpus:
             p |= 1
         cpu.set_p(p)
         init = (cpu.a, cpu.x, cpu.y, cpu.s, cpu.pack_p())
-        reason, stop_pc = cpu.run_program(prog["code"], prog["org"], set(cfg.blocks), entry, budget)
+        reason, stop_pc = cpu.run_program(prog["code"], prog["org"], set(cfg.blocks), entry, budget, prog.get("smc", ()))
         st = cpu.state()
         # P comparável: no YIELD em bloco conhecido, flags N V Z C MORTOS ali podem estar desatualizados
         # (garantia do tradutor; ver opt.cfg_liveness). Em PC não resolvido: tudo vivo => P exato.

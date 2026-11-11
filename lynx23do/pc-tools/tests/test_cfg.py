@@ -29,6 +29,33 @@ class TestCfg(unittest.TestCase):
         cfg = build_cfg(PROG, 0x200, [0x200])
         self.assertEqual(set(cfg.starts), independent_leaders(PROG, 0x200, [0x200]))
 
+    def test_brk_ends_block_and_continuation_is_retaddr_leader(self):
+        cfg = build_cfg(H("A901 00FF 6902 40"), 0x300, [0x300])              # LDA; BRK+assinatura; ADC; RTI
+        self.assertEqual(cfg.starts, [0x300, 0x304])
+        self.assertEqual(cfg.blocks[0x300].kind, "brk")
+        self.assertTrue(cfg.blocks[0x304].retaddr)
+        self.assertEqual(set(cfg.starts), independent_leaders(H("A901 00FF 6902 40"), 0x300, [0x300]))
+
+    def test_hook_address_is_not_decoded_nor_followed(self):
+        # LDA #1; (hook em $0302: bytes inválidos que o decoder rejeitaria); depois do hook: RTS
+        img = H("A901 0F0F0F 60")
+        with self.assertRaises(UnsupportedOpcode):
+            build_cfg(img, 0x300, [0x300])
+        cfg = build_cfg(img, 0x300, [0x300], hooks=[0x302])
+        self.assertEqual(cfg.starts, [0x300])                       # sem bloco para o hook
+        self.assertEqual(cfg.blocks[0x300].kind, "fall")
+        self.assertEqual(cfg.blocks[0x300].succs, [0x302])          # cai no hook (sucessor desconhecido => flags vivos)
+
+    def test_smc_immediate_operand_is_marked_and_other_modes_rejected(self):
+        from lynx2c.cfg import SmcError
+        cfg = build_cfg(H("A901 8D0302 60"), 0x300, [0x300], smc_operands=[0x301])   # operando do LDA #
+        self.assertTrue(cfg.blocks[0x300].insns[0].smc)
+        self.assertFalse(cfg.blocks[0x300].insns[1].smc)
+        with self.assertRaises(SmcError):
+            build_cfg(H("A901 8D0302 60"), 0x300, [0x300], smc_operands=[0x303])     # operando de STA abs
+        with self.assertRaises(SmcError):
+            build_cfg(H("A901 60"), 0x300, [0x300], smc_operands=[0x300])            # opcode
+
     def test_unreachable_bytes_are_data_not_decoded(self):
         cfg = build_cfg(PROG, 0x200, [0x200])                    # $EA em $020A nunca é decodificado
         covered = {i.addr for b in cfg.blocks.values() for i in b.insns}
@@ -36,7 +63,7 @@ class TestCfg(unittest.TestCase):
 
     def test_reachable_unsupported_opcode_is_explicit_error(self):
         with self.assertRaises(UnsupportedOpcode) as cm:
-            build_cfg(H("A901 EA"), 0x300, [0x300])
+            build_cfg(H("A901 DB"), 0x300, [0x300])
         self.assertIn("$0302", str(cm.exception))
 
     def test_truncated_at_end_of_image(self):
@@ -91,6 +118,15 @@ class TestLivenessAcrossBlocks(unittest.TestCase):
         img = H("A900 F002 A905 A907 80FE")
         _, ops = analyze(img, 0x200, [0x200], precise_exits=True)
         self.assertEqual(ops[0x200][0].dead, frozenset())               # nada eliminado entre blocos
+
+    def test_php_and_brk_force_flags_live(self):
+        for img in (H("A900 08 80FE"), H("A900 00FF 80FE")):                  # LDA #0; PHP / BRK
+            _, ops = analyze(img, 0x200, [0x200])
+            self.assertEqual(ops[0x200][0].dead, frozenset(), img.hex())
+
+    def test_plp_redefines_all_flags(self):
+        _, ops = analyze(H("A900 28 80FE"), 0x200, [0x200])                   # LDA #0; PLP; BRA *
+        self.assertEqual(ops[0x200][0].dead, frozenset("NZ"))                # PLP redefine NZCV antes de qualquer uso
 
     def test_ret_and_indirect_keep_everything_live(self):
         for img in (H("A900 60"), H("A900 6C0010")):

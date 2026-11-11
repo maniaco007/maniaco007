@@ -104,6 +104,8 @@ também no modo preciso → agora `0xFF` fixo; (3) teste do ponto fixo com dist�
 - Desempenho: fase 1 (todo bloco passa pela tabela; busca binária por bloco). Sem medição.
 - Nada compilado com o armcc do SDK 3DO.
 
+> v0.4.0 completou o conjunto de opcodes e validou com Dormann — ver `docs/08`.
+
 ## 7. Próximos passos sugeridos
 1. Resto do conjunto "de uso comum" para programas reais: `CMP/CPX/CPY`, `AND/ORA/EOR`, `INC/DEC`, `INX/INY/DEX/DEY`,
    `LDX/LDY/STX/STY`, `Txx`, `PHA/PLA/PHP/PLP`, `CLC/SEC/CLD/SED/CLI/SEI/CLV`, `NOP`, `RTI/BRK` — com `PHP/PLP`
