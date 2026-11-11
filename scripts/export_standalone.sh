@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # export_standalone.sh — cria um repositório git NOVO e independente só com o projeto lynx23do.
 #
-# Copia (respeitando .gitignore; sem histórico, sem build/): lynx23do/, backups/, scripts/, CLAUDE.md, README.md de projeto e .gitignore.
+# Copia (respeitando .gitignore; sem histórico, sem build/): lynx23do/, backups/, scripts/, .claude/ (subagentes e comandos), CLAUDE.md, README.md de projeto e .gitignore.
 # A estrutura de pastas é mantida (os scripts e o CLAUDE.md dependem de lynx23do/, backups/ e scripts/ na raiz).
 # Nunca altera o repositório de origem nem backups/ de origem.
 #
@@ -21,7 +21,7 @@ DEST="$(cd "$DEST" && pwd)"
 case "$DEST/" in "$SRC"/*) echo "ERRO: o destino não pode ficar dentro do repositório de origem." >&2; exit 1;; esac
 
 # arquivos versionados + novos não ignorados, só das pastas do projeto
-git ls-files --cached --others --exclude-standard -z -- lynx23do backups scripts CLAUDE.md \
+git ls-files --cached --others --exclude-standard -z -- lynx23do backups scripts CLAUDE.md .claude \
   | tar --null -T - -cf - | tar -xf - -C "$DEST"
 
 cp lynx23do/.gitignore "$DEST/.gitignore"
@@ -30,7 +30,8 @@ cat > "$DEST/README.md" <<'MD'
 
 Framework de **recompilação estática (65C02 → C89)** + **HLE do Suzy (Cel Engine)** para portar jogos de Atari Lynx para o 3DO.
 
-- **Comece por:** [`CLAUDE.md`](CLAUDE.md) (regras e comandos), [`lynx23do/docs/13-handoff-sessao-local.md`](lynx23do/docs/13-handoff-sessao-local.md) (estado e próximos passos) e [`lynx23do/README.md`](lynx23do/README.md).
+- **Comece por:** [`CLAUDE.md`](CLAUDE.md) (regras e comandos), [`lynx23do/docs/15-roteiro-estruturado.md`](lynx23do/docs/15-roteiro-estruturado.md) (marcos, subagentes em `.claude/agents/`),
+  [`lynx23do/docs/13-handoff-sessao-local.md`](lynx23do/docs/13-handoff-sessao-local.md) (estado) e [`lynx23do/README.md`](lynx23do/README.md).
 - Estado: v0.8.0 — tradutor verificado; backend 3DO escrito mas **ainda não compilado com `armcc` nem executado em console**.
 - `backups/` contém backups **imutáveis** com README próprio (regra do projeto); `scripts/make_backup.sh` cria novos.
 - Sem ROMs/BIOS no repositório.

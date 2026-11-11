@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m unittest:*)",
+      "Bash(python3 -m lynx2c:*)",
+      "Bash(lynx23do/pc-tools/tests/run_diff.sh:*)",
+      "Bash(lynx23do/pc-tools/tests/functional/run_dormann.sh:*)",
+      "Bash(lynx23do/scripts/check_headers.sh:*)",
+      "Bash(lynx23do/scripts/check_3do_build.sh:*)",
+      "Bash(scripts/check_backups_immutable.sh:*)",
+      "Bash(scripts/check_claude_config.sh:*)",
+      "Bash(scripts/make_backup.sh:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git reset --hard:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/claude-hooks/protect_backups.py\"" }
+        ]
+      }
+    ]
+  }
+}

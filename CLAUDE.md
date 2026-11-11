@@ -1,6 +1,7 @@
 # CLAUDE.md — lynx23do (porte de Atari Lynx para Panasonic 3DO)
 
-Leia primeiro: `lynx23do/docs/13-handoff-sessao-local.md` (estado, o que falta, o que fazer no PC) e `lynx23do/README.md`.
+Leia primeiro: `lynx23do/docs/13-handoff-sessao-local.md` (estado, o que falta, o que fazer no PC), `lynx23do/docs/15-roteiro-estruturado.md` (marcos F0–F10,
+subagentes, critérios de aceitação) e `lynx23do/README.md`.
 O projeto está em `lynx23do/`; backups imutáveis em `backups/`; scripts de backup em `scripts/`.
 
 ## Regras OBRIGATÓRIAS do usuário (valem para toda sessão)
@@ -51,7 +52,16 @@ o devkit do 3DO (`armcc`) para o backend real. Windows: use WSL ou Git Bash para
 | `XProger/nes-3do` | BSD-2 | fluxo `armcc→armlink→modbin→3doiso→3DOEncrypt` e CCB |
 Resumo e decisões: `lynx23do/docs/12-survey-emuladores-lynx.md`.
 
-## Prioridades (ver docs/13 §5)
+## Como trabalhar: orquestrador + subagentes (detalhes em `lynx23do/docs/15-roteiro-estruturado.md`)
+Você, na sessão principal, é o **orquestrador**: planeja, delega e **reexecuta as verificações por conta própria** (nunca repasse números de um subagente sem conferir).
+Subagentes em `.claude/agents/`: `guardiao-processo` (backup/checklist), `avaliador-projetos` (só leitura dos projetos NES/SMS), `integrador-3do-armcc`,
+`engenheiro-tradutor`, `engenheiro-mikey-agendador`, `engenheiro-suzy-hle`, `engenheiro-cartucho-boot`, `verificador-independente` (revisão adversarial, obrigatória antes de
+commit de código), `arquiteto-multiconsole`. Comandos: `/status-projeto`, `/disparar-marco <F#>`, `/abrir-lote`, `/fechar-lote`, `/verificar-tudo`.
+Ciclo por marco: **backup → plano → implementação (oráculo/teste primeiro) → verificação → verificador independente → fechar (docs, licenças, commit só com confirmação do usuário)**.
+Agentes não editam os mesmos arquivos ao mesmo tempo; mudança de ABI é coordenada por você. Validação da configuração: `scripts/check_claude_config.sh`.
+Trava técnica opcional da regra de backups (hook): `scripts/claude-hooks/README.md`.
+
+## Prioridades (ver docs/13 §5 e a tabela de marcos do docs/15)
 0. Se o usuário trouxer os projetos **NES→3DO** e **Master System→3DO** (ele já os tem funcionando no PC): analisar e **reaproveitar** (cadeia de build/ISO,
    backend de vídeo/áudio/entrada, técnicas), registrando o que for aproveitado em `docs/` e `NOTICE`.
 1. **Primeiro teste no console (M1)**: `lynx23do/docs/11-plataforma-3do-e-primeiro-teste.md` §6. Aqui o `armcc` do devkit do usuário pode ser executado.

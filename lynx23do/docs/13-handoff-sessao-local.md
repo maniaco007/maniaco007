@@ -39,6 +39,9 @@ Resultados de referência (v0.8.0, medidos na nuvem): 149 unitários OK; diferen
 2. Ler as pastas **NES→3DO** e **Master System→3DO** do usuário (já funcionam no console dele) e dizer o que reaproveitar.
 3. Gerar o ISO e testar no ODE com o usuário (resultado esperado: docs/11 §6).
 
+> **Atualização:** o roteiro formal (marcos F0–F10, subagentes em `.claude/agents/`, comandos `/disparar-marco` etc., critérios de aceitação) está em
+> `docs/15-roteiro-estruturado.md`. Comece por **F0** (`/verificar-tudo`) e **F1** (avaliação dos projetos NES/SMS). A seção abaixo é o resumo original.
+
 ## 5. Roteiro sugerido para a primeira sessão local
 **A. Avaliar os dois projetos do usuário (NES e Master System), SOMENTE LEITURA.** Para cada um, registrar em um novo `docs/14-avaliacao-projetos-nes-sms.md`:
  1. Tipo: porte por recompilação, emulador interpretado ou código reescrito? Linguagem(ns) e tamanho.

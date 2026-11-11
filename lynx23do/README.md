@@ -28,6 +28,8 @@ ponta no PC. **Falta o primeiro teste no console:** compilar com o `armcc` do SE
 10. [`docs/10-fase2-gerador.md`](docs/10-fase2-gerador.md) — rotinas fundidas, 17,9×, o limite de blocos, bugs achados
 11. [`docs/11-plataforma-3do-e-primeiro-teste.md`](docs/11-plataforma-3do-e-primeiro-teste.md) — **o que reaproveitei do GitHub, o que foi verificado, como fazer o 1º teste no ODE**
 12. [`docs/12-survey-emuladores-lynx.md`](docs/12-survey-emuladores-lynx.md) — **survey de Felix, Gearlynx, libretro-handy e Cardputer: modelo de ticks, timers do Mikey, especificação do Suzy, boot HLE, padrões para outros consoles**
+13. [`docs/13-handoff-sessao-local.md`](docs/13-handoff-sessao-local.md) — **handoff para a sessão local (PC): estado, o que falta**
+15. [`docs/15-roteiro-estruturado.md`](docs/15-roteiro-estruturado.md) — **roteiro: marcos F0–F10, subagentes (`.claude/agents/`), critérios de aceitação** (o `docs/14` será gerado pelo marco F1)
 
 ## Estrutura
 ```
