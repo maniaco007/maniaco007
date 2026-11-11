@@ -26,4 +26,9 @@
 void lx_adc_dec(LxCpu *c, lx_u8 m);
 void lx_sbc_dec(LxCpu *c, lx_u8 m);
 
+/* Versões "por valor" para a fase 2 (não obrigam as variáveis locais a ir para a memória). Retornam
+ * A | (C << 8) | (V << 9); N e Z são derivados do A final (65C02). */
+lx_u32 lx_adc_dec_v(lx_u32 a, lx_u32 c, lx_u32 m);
+lx_u32 lx_sbc_dec_v(lx_u32 a, lx_u32 c, lx_u32 m);
+
 #endif /* LX_ALU_H */

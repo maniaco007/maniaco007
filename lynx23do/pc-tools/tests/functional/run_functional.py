@@ -36,6 +36,8 @@ def main():
     ap.add_argument("--cc-opt", default="-O1")
     ap.add_argument("--workdir", default=os.path.join(PROJ, "build", "functional"))
     ap.add_argument("--precise-exits", action="store_true")
+    ap.add_argument("--max-blocks", type=int, default=None, help="blocos por rotina na fase 2 (padrão: DEFAULT_MAX_BLOCKS; 0 = sem limite)")
+    ap.add_argument("--phase", type=int, choices=(1, 2), default=2, help="fase do gerador (1: bloco por função; 2: rotinas fundidas)")
     ap.add_argument("--max-rounds", type=int, default=60)
     ap.add_argument("--smc-operand", type=lambda s: int(s, 0), action="append", default=[], metavar="ADDR",
                     help="byte de operando IMEDIATO modificado em execução (param_operand); repetível")
@@ -60,7 +62,7 @@ def main():
                            hooks={int(x.split(':')[0], 0) for x in a.skip})
         c_path = os.path.join(a.workdir, "functional_gen.c")
         with open(c_path, "w", encoding="utf-8") as f:
-            f.write(_HEADER % {"ver": __version__, "abi": ABI_VERSION} + "\n" + emit_overlay(0, cfg, ops))
+            f.write(_HEADER % {"ver": __version__, "abi": ABI_VERSION} + "\n" + emit_overlay(0, cfg, ops, phase=a.phase, max_blocks=a.max_blocks))
         exe = os.path.join(a.workdir, "functional_harness")
         defs = []
         for i, sk in enumerate(a.skip[:4]):
@@ -87,7 +89,7 @@ def main():
         if m and a.report:
             from lynx2c.report import build_report
             rep = build_report(os.path.basename(a.image), cfg, ops, len(image), include_dir=os.path.join(PROJ, "runtime", "include"),
-                               smc_operands=a.smc_operand, hooks={int(x.split(':')[0], 0) for x in a.skip},
+                               phase=a.phase, max_blocks=a.max_blocks, smc_operands=a.smc_operand, hooks={int(x.split(':')[0], 0) for x in a.skip},
                                notes=["imagem funcional com %d sementes dinâmicas descobertas em execução" % (len(seeds) - 1 - len(a.skip))])
             with open(a.report, "w", encoding="utf-8") as f:
                 f.write(rep)

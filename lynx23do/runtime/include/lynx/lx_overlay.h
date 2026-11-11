@@ -22,10 +22,12 @@
 
 /* Entrada de despacho (8 bytes no ARM32). Vetor ORDENADO por addr (busca binária). */
 typedef struct LxDispatchEntry {
-    lx_u16   addr;     /* endereço 65C02 do ponto de entrada */
-    lx_u16   flags;    /* LX_DE_* */
+    lx_u16   addr;       /* endereço 65C02 do líder */
+    lx_u16   sub_flags;  /* bits 3..0: LX_DE_*; bits 15..4: sub-entrada (líder dentro da rotina 'fn'; 0 = raiz) */
     LxCodeFn fn;
 } LxDispatchEntry;
+#define LX_DE_FLAGS_MASK 0x000F
+#define LX_DE_SUB(x)     ((lx_u32)((x) >> 4))
 
 #define LX_DE_COLD     0x0001  /* gerado na forma compacta (cold tier) */
 #define LX_DE_RETADDR  0x0002  /* continuação após JSR (retorno por RTS dinâmico) */

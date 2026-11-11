@@ -47,3 +47,21 @@ void lx_sbc_dec(LxCpu *c, lx_u8 m)
     c->zsrc = c->a;
 }
 
+
+lx_u32 lx_adc_dec_v(lx_u32 a, lx_u32 c, lx_u32 m)
+{
+    LxCpu t;
+    t.a = (lx_u8)a;
+    t.c = (lx_u8)c;
+    lx_adc_dec(&t, (lx_u8)m);
+    return (lx_u32)t.a | ((lx_u32)t.c << 8) | ((lx_u32)t.v << 9);
+}
+
+lx_u32 lx_sbc_dec_v(lx_u32 a, lx_u32 c, lx_u32 m)
+{
+    LxCpu t;
+    t.a = (lx_u8)a;
+    t.c = (lx_u8)c;
+    lx_sbc_dec(&t, (lx_u8)m);
+    return (lx_u32)t.a | ((lx_u32)t.c << 8) | ((lx_u32)t.v << 9);
+}

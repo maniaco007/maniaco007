@@ -110,6 +110,8 @@ def main(argv=None) -> int:
                            help="byte de operando IMEDIATO modificado em execução (repetível; param_operand)")
         if name == "translate":
             s.add_argument("--overlay-id", type=int, default=0)
+            s.add_argument("--phase", type=int, choices=(1, 2), default=2, help="1: um bloco por função; 2: rotinas fundidas (padrão)")
+            s.add_argument("--max-blocks", type=int, default=None, help="blocos por rotina na fase 2 (0 = sem limite)")
             s.add_argument("--precise-exits", action="store_true",
                            help="todos os flags vivos em toda saída de bloco (P exato em IRQ/yield)")
             s.add_argument("--out", default="-")
@@ -146,7 +148,7 @@ def main(argv=None) -> int:
                   len(b.insns), " ".join("$%04X" % x for x in b.succs) or "-"))
         return 0
 
-    code = emit_overlay(a.overlay_id, cfg, ops)
+    code = emit_overlay(a.overlay_id, cfg, ops, phase=a.phase, max_blocks=a.max_blocks)
     code = _HDR + code
     if a.out == "-":
         sys.stdout.write(code)

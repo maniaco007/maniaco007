@@ -3,7 +3,7 @@
 Especificação: [`docs/02-pipeline-aot-pc.md`](../../docs/02-pipeline-aot-pc.md) · estado atual:
 [`docs/06`](../../docs/06-traducao-lda-sta-adc-sbc.md), [`docs/07`](../../docs/07-fluxo-de-controle.md).
 
-**v0.5.0:** (+ `ingest`, `report`, `armsize`; ABI v2) decode → **CFG** → lift → **vivacidade de flags (ponto fixo)** → emit, para **178 opcodes** (NMOS documentados +
+**v0.6.0:** (+ fase 2: rotinas fundidas, ABI v3; `--phase`, `--max-blocks`) decode → **CFG** → lift → **vivacidade de flags (ponto fixo)** → emit, para **178 opcodes** (NMOS documentados +
 65C02 de uso comum; sem Rockwell/WDC). Suporta `--smc-operand` (operando imediato modificável), `--hook`, `--precise-exits`.
 Tabela gerada por `tools/gen_optable.py`.
 
@@ -15,7 +15,8 @@ python3 -m lynx2c translate --org 0x0200 --hex "A9 00 F0 02 69 01 60" [--entry 0
 python3 -m lynx2c ingest --file jogo.lnx          # estágio A: formato, bancos, rotação, SHA-256
 python3 -m lynx2c report --file programa.o --budget-kb 640 --out report.md   # BS93 ou --org p/ imagem plana
 ```
-Ferramentas: `tools/gen_optable.py` (tabela), `tools/extract_handy_ref.py` (dados do Handy), `tools/opcode_cost.py` (custo ARM por opcode).
+Ferramentas: `tools/gen_optable.py` (tabela), `tools/extract_handy_ref.py` (dados do Handy), `tools/opcode_cost.py` (custo ARM por opcode, fase 1),
+`tools/sweep_routines.py` (varre o limite de blocos por rotina: tamanho ARM e maior quadro de pilha).
 `translate` emite um overlay completo (funções + tabela de despacho + `LxOverlay`).
 
 | Módulo | Estágio | Estado |
@@ -25,7 +26,8 @@ Ferramentas: `tools/gen_optable.py` (tabela), `tools/extract_handy_ref.py` (dado
 | `cfg.py` | C | descida recursiva, líderes, erros explícitos (opcode, truncada, sobreposição, SMC), hooks e `param_operand` |
 | `ir.py`, `lift.py` | D | defs/uses de flags, região do operando |
 | `opt.py` | E | liveness em bloco e entre blocos; `precise_exits`; demais otimizações a fazer |
-| `emit_c.py` | F | blocos + terminadores + tabela de despacho + overlay (fase 1, trampolim) |
+| `routines.py` | F | partição do CFG em rotinas (raízes, limite de blocos por rotina) |
+| `emit_c.py` | F | fase 1 (um bloco por função) e **fase 2** (rotinas fundidas, variáveis locais, sub-entradas) + tabela de despacho |
 | `pipeline.py`, `cli.py` | — | `analyze()`; `disasm`, `cfg`, `translate` |
 | `ingest.py` | A | `.lnx`, BS93 e imagem plana (formatos conferidos com o Handy) |
 | `report.py`, `armsize.py` | C | `report.md` de elegibilidade; tamanho ARM **medido** com clang (ARM BE) |

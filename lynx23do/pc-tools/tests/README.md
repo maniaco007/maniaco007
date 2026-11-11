@@ -15,6 +15,7 @@ SKIP_UNIT=1 SKIP_BLOCKS=1 pc-tools/tests/run_diff.sh   # só programas (mutaçã
 | `gen_vectors.py` + `harness/main.c` | corpus de BLOCOS RETOS: 557 mil vetores |
 | `gen_programs.py` + `harness/main_prog.c` | corpus de PROGRAMAS (aleatórios + dirigidos) com o trampolim real: 9,7 mil vetores |
 | `functional/run_dormann.sh` + `run_functional.py` + `functional_main.c` | suítes funcionais **independentes** de Klaus Dormann pelo pipeline completo, com sementes iterativas (`docs/08` §3) |
+| `test_routines.py` | fase 2: partição em rotinas, limite de blocos, estrutura do C (locais, saída única, sub-entradas) |
 | `test_ingest.py`, `test_report.py` | estágio A (`.lnx`, BS93) e relatório/medição ARM |
 | `test_handy_reference.py`, `test_handy_decimal.py` | comparação com o Handy: opcodes, ciclos-base e BCD exaustivo (A×M×C) |
 | `harness/lx_test_stubs.c` | E/S falsa por chip (valor próprio por chip + detecção de roteamento errado) e agendador de teste |

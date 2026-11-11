@@ -17,6 +17,7 @@ Convenções do código gerado (contrato = runtime/include/lynx/lx_cpu_abi.h):
     Desvio tomado soma +1 ciclo (+1 se o alvo cruza página, decidido na tradução).
 """
 
+import re
 from typing import Iterable, List, Sequence, Tuple
 
 from . import ABI_VERSION, __version__
@@ -370,10 +371,11 @@ def emit_block(name: str, ops: Sequence[IrOp], org: int) -> str:
 
     out = ["/* bloco $%04X..$%04X, %d instrução(ões), %d ciclos base */" %
            (org, (next_pc - 1) & 0xFFFF, len(ops), total),
-           "lx_u32 %s(LxCpu *cpu)" % name, "{"]
+           "lx_u32 %s(LxCpu *cpu, lx_u32 entry)" % name, "{"]
     out += ["    " + d for d in decls]
     if decls:
         out.append("")
+    out.append("    (void)entry;                      /* fase 1: um bloco por função, sem sub-entradas */")
     out += ["    " + l for l in body]
     out.append("")
     if terminated:
@@ -390,23 +392,43 @@ def block_fn_name(overlay_id: int, start: int) -> str:
     return "lx_ov%d_%04X" % (overlay_id, start)
 
 
-def emit_overlay(overlay_id: int, cfg, ops_by_block, cart_offset: int = 0) -> str:
-    """Emite funções de TODOS os blocos de um CFG + tabela de despacho + descritor LxOverlay.
-    Fase 1: todo bloco entra na tabela (o trampolim despacha por PC). Fase 2 reduzirá a tabela
-    aos alvos dinâmicos (docs/02 §7)."""
-    parts = []
-    for start in cfg.starts:
-        parts.append(emit_block(block_fn_name(overlay_id, start), ops_by_block[start], start))
-    rows = []
-    for start in cfg.starts:
-        flags = "LX_DE_RETADDR" if cfg.blocks[start].retaddr else "0"
-        rows.append("    { 0x%04X, %s, %s }" % (start, flags, block_fn_name(overlay_id, start)))
-    parts.append("static const LxDispatchEntry lx_ov%d_entries[] = {\n%s\n};\n" %
-                 (overlay_id, ",\n".join(rows)))
-    parts.append("const LxOverlay lx_ov%d = {\n"
-                 "    %d, 0x%04X, 0x%04X, %d, 0x%X, 0, lx_ov%d_entries\n};\n" %
-                 (overlay_id, overlay_id, cfg.org, cfg.size, len(cfg.starts), cart_offset, overlay_id))
-    return "\n".join(parts)
+def _entry_row(addr, sub, flags, fn):
+    f = "%s" % flags if flags else "0"
+    return "    { 0x%04X, 0x%04X | %s, %s }" % (addr, (sub << 4) & 0xFFFF, f, fn)
+
+
+def emit_functions(overlay_id: int, cfg, ops_by_block, phase: int = 2, max_blocks=None):
+    """Emite as FUNÇÕES do overlay. Retorna (texto, {endereço_do_bloco: (nome_da_função, sub)}).
+    phase 1: um bloco por função (trampolim por bloco). phase 2: rotinas com blocos fundidos (docs/04 §3.2)."""
+    parts, where = [], {}
+    if phase == 1:
+        for start in cfg.starts:
+            nm = block_fn_name(overlay_id, start)
+            parts.append(emit_block(nm, ops_by_block[start], start))
+            where[start] = (nm, 0)
+    else:
+        from .routines import DEFAULT_MAX_BLOCKS, partition
+        part = partition(cfg, DEFAULT_MAX_BLOCKS if max_blocks is None else max_blocks)
+        for root, blocks in part.items():
+            nm = block_fn_name(overlay_id, root)
+            parts.append(emit_routine(nm, cfg, ops_by_block, root, blocks, set(part)))
+            order = [root] + [x for x in blocks if x != root]
+            for sub, blk in enumerate(order):
+                where[blk] = (nm, sub)
+    return "\n".join(parts), where
+
+
+def emit_overlay(overlay_id: int, cfg, ops_by_block, cart_offset: int = 0, phase: int = 2, max_blocks=None) -> str:
+    """Emite funções + tabela de despacho + descritor LxOverlay. A tabela lista TODOS os líderes (cada um com sua
+    sub-entrada), porque um YIELD no meio de uma rotina precisa poder ser retomado dali."""
+    text, where = emit_functions(overlay_id, cfg, ops_by_block, phase, max_blocks)
+    rows = [_entry_row(st, where[st][1], "LX_DE_RETADDR" if cfg.blocks[st].retaddr else "", where[st][0])
+            for st in cfg.starts]
+    return "\n".join([
+        text,
+        "static const LxDispatchEntry lx_ov%d_entries[] = {\n%s\n};\n" % (overlay_id, ",\n".join(rows)),
+        "const LxOverlay lx_ov%d = {\n    %d, 0x%04X, 0x%04X, %d, 0x%X, 0, lx_ov%d_entries\n};\n" %
+        (overlay_id, overlay_id, cfg.org, cfg.size, len(cfg.starts), cart_offset, overlay_id)])
 
 
 def emit_unit(blocks: Iterable[Tuple[str, Sequence[IrOp], int]]) -> str:
@@ -415,3 +437,178 @@ def emit_unit(blocks: Iterable[Tuple[str, Sequence[IrOp], int]]) -> str:
     for name, ops, org in blocks:
         parts.append(emit_block(name, ops, org))
     return "\n".join(parts)
+
+
+# =====================================================================================================
+# FASE 2 — rotinas: blocos fundidos por goto, registradores e flags em VARIÁVEIS LOCAIS
+# Contrato (ABI v3):  lx_u32 f(LxCpu *cpu, lx_u32 entry)
+#   - entrada: carrega só as variáveis usadas; 'entry' escolhe o líder onde começar (0 = raiz);
+#   - teste de evento (cyc >= ev) APÓS cada instrução de fluxo (desvio, salto, JSR, RTS...) e em toda saída;
+#     NÃO há teste entre blocos que só caem um no outro (é a mudança de fronteira que o oráculo conhece: 'raízes');
+#   - saída única L_exit: grava as variáveis escritas e cpu->cycles; se cyc >= ev chama lx_sched_service (chamada final).
+# =====================================================================================================
+_P2_REGS = ("a", "x", "y", "s", "c", "v", "d", "i", "nsrc", "zsrc")
+_REG_RE = re.compile(r"cpu->(a|x|y|s|c|v|d|i|nsrc|zsrc)\b")
+_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+_WRITE_RE = {n: re.compile(r"\b%s\s*(?:\+|-|\||&|\^|<<|>>)?=(?!=)" % n) for n in _P2_REGS}
+
+
+def _p2_line(line):
+    """Converte uma linha emitida na forma da fase 1 (campos de LxCpu) para a fase 2 (variáveis locais)."""
+    if line.strip().startswith("cpu->b = 0;"):
+        return None                                           # B não é estado: só existe no P empilhado
+    line = re.sub(r"lx_push8\(&cpu->s, (.+?)\);", r"LX_PUSH8(s, \1);", line)
+    line = line.replace("lx_pull8(&cpu->s)", "LX_PULL8(s)")
+    line = line.replace("lx_cpu_pack_p(cpu)", "LX_PACK_P(nsrc, v, d, i, zsrc, c)")
+    line = re.sub(r"lx_cpu_unpack_p\(cpu, (.+)\);", r"LX_UNPACK_P(\1, nsrc, zsrc, v, d, i, c);", line)
+    line = re.sub(r"lx_(adc|sbc)_dec\(cpu, \(lx_u8\)m\);",
+                  r"t = lx_\1_dec_v(a, c, m); a = t & 0xFF; c = (t >> 8) & 1; v = (t >> 9) & 1; nsrc = a; zsrc = a;", line)
+    line = line.replace("cpu->cycles", "cyc")
+    return _REG_RE.sub(r"\1", line)
+
+
+def _p2_terminator(op, ctx, intra, label, nxt_physical, base):
+    """Transferência de controle da fase 2. 'intra' = endereços de blocos da MESMA rotina; 'nxt_physical' = endereço do
+    bloco que vem fisicamente a seguir na função (cair nele não precisa de goto); 'base' = ciclos base do bloco."""
+    insn, sem = op.insn, op.sem
+
+    def go(tgt, with_check=True):
+        """Salta para tgt: dentro da rotina com teste de evento; fora, pela saída única (que testa)."""
+        if tgt in intra:
+            lines = (["if (cyc >= ev) { pc = 0x%04X; goto L_exit; }" % tgt] if with_check else [])
+            return lines + ["goto %s;" % label(tgt)]
+        return ["pc = 0x%04X;" % tgt, "goto L_exit;"]
+
+    L = ["cyc += %d;" % base]
+    if sem in _BRANCH_COND:
+        ctx_taken = _taken_extra(insn)
+        L.append("if (%s) {" % _REG_RE.sub(r"\1", _BRANCH_COND[sem]))     # condição sobre as variáveis LOCAIS
+        L.append("    cyc += %d;" % ctx_taken)
+        L += ["    " + x for x in go(insn.target)]
+        L.append("}")
+        nxt = insn.next_addr
+        if nxt in intra:
+            L.append("if (cyc >= ev) { pc = 0x%04X; goto L_exit; }" % nxt)
+            if nxt != nxt_physical:
+                L.append("goto %s;" % label(nxt))
+        else:
+            L += ["pc = 0x%04X;" % nxt, "goto L_exit;"]
+        return L
+    if sem == "bra":
+        L.append("cyc += %d;" % _taken_extra(insn))
+        return L + go(insn.target)
+    if sem == "jmp":
+        return L + go(insn.target)
+    # saídas dinâmicas / chamadas: sempre pela saída única
+    lines = _emit_terminator(op, ctx)
+    return L + [ln for ln in (_p2_line(x) for x in lines) if ln is not None] + ["goto L_exit;"]
+
+
+def emit_routine(name, cfg, ops_by_block, root, blocks, roots):
+    """Uma função C para a rotina 'root' com os blocos 'blocks' fundidos."""
+    order = [root] + [b for b in blocks if b != root]
+    sub_of = {blk: i for i, blk in enumerate(order)}
+    intra = set(blocks)
+    emit_order = sorted(blocks)                                  # ordem física = endereço crescente
+    multi = len(blocks) > 1
+
+    # alvos de goto internos (para saber quais rótulos existem)
+    referenced = set(emit_order) if multi else set()
+    for blk in emit_order:
+        b = cfg.blocks[blk]
+        if b.kind in ("branch", "jump") and any(t in intra and t == blk for t in b.succs):
+            referenced.add(blk)                                   # laço de um bloco só
+
+    def label(a):
+        return "L_%04X" % a
+
+    ctx = _Ctx()
+    ctx.pc = True
+    body = []
+    for idx, blk in enumerate(emit_order):
+        ops = ops_by_block[blk]
+        nxt_physical = emit_order[idx + 1] if idx + 1 < len(emit_order) else None
+        if blk in referenced:
+            body.append(label(blk) + ":")
+        total = sum(o.insn.cycles for o in ops)
+        for i, op in enumerate(ops):
+            if op.insn.flow != "seq" and i != len(ops) - 1:
+                raise ValueError("instrução de fluxo no meio do bloco em $%04X" % op.insn.addr)
+        term = ops[-1] if ops[-1].insn.flow != "seq" else None
+        for op in (ops[:-1] if term else ops):
+            for ln in _emit_op(op, ctx):
+                ln = _p2_line(ln)
+                if ln is not None:
+                    body.append("    " + ln if not ln.startswith("/*") else "    " + ln)
+        if term is not None:
+            # a própria instrução terminadora também gera linhas de operando? (não: só controle)
+            body.append("    /* $%04X  %s */" % (term.insn.addr, term.insn.text()))
+            for ln in _p2_terminator(term, ctx, intra, label, nxt_physical, total):
+                body.append("    " + ln)
+        else:
+            last = ops[-1].insn
+            nxt = last.next_addr
+            body.append("    cyc += %d;" % total)
+            if nxt in intra:
+                if nxt == root:                       # cair numa RAIZ (mesmo a da própria rotina, se houver blocos em
+                    body.append("    if (cyc >= ev) { pc = 0x%04X; goto L_exit; }" % nxt)   # endereço menor) é fronteira
+                if nxt != nxt_physical or nxt == root:
+                    body.append("    goto %s;" % label(nxt))
+            else:
+                body += ["    pc = 0x%04X;" % nxt, "    goto L_exit;"]
+
+    text = "\n".join(body)
+    plain = _COMMENT_RE.sub("", text)
+    referenced_regs = [n for n in _P2_REGS if re.search(r"\b%s\b" % n, plain)]
+    if "LX_UNPACK_P" in plain:
+        referenced_regs = list(_P2_REGS[4:]) + [n for n in referenced_regs if n not in _P2_REGS[4:]]
+    if "LX_PACK_P" in plain:
+        for n in ("nsrc", "v", "d", "i", "zsrc", "c"):
+            if n not in referenced_regs:
+                referenced_regs.append(n)
+    referenced_regs = [n for n in _P2_REGS if n in referenced_regs]
+    written = set(n for n in referenced_regs if _WRITE_RE[n].search(plain))
+    if "LX_PUSH8(s" in plain or "LX_PULL8(s" in plain:
+        written.add("s")
+        if "s" not in referenced_regs:
+            referenced_regs.append("s")
+    if "LX_UNPACK_P" in plain:
+        written |= {"nsrc", "zsrc", "v", "d", "i", "c"}
+    referenced_regs = [n for n in _P2_REGS if n in referenced_regs]
+
+    decls = ["lx_u32 %s;" % ", ".join(referenced_regs + ["cyc", "ev", "pc"])]
+    for flag, vname in ((ctx.ea, "ea"), (ctx.m, "m"), (ctx.t, "t")):
+        if flag:
+            decls.append("lx_u32 %s;" % vname)
+    nroots = len(order)
+    out = ["/* rotina $%04X: %d bloco(s) fundido(s), %d instrução(ões) */" %
+           (root, nroots, sum(len(ops_by_block[b]) for b in blocks)),
+           "lx_u32 %s(LxCpu *cpu, lx_u32 entry)" % name, "{"]
+    out += ["    " + d for d in decls]
+    out.append("")
+    for n in referenced_regs:
+        out.append("    %s = cpu->%s;" % (n, n))
+    out.append("    cyc = cpu->cycles;")
+    out.append("    ev = cpu->next_event;")
+    out.append("    pc = 0;")
+    if multi:
+        out.append("    switch (entry) {")
+        for blk in order:
+            out.append("    case %d: goto %s;" % (sub_of[blk], label(blk)))
+        out.append("    default: goto %s;" % label(root))
+        out.append("    }")
+    else:
+        out.append("    (void)entry;")
+    out.append("")
+    out.append(text)
+    out.append("")
+    out.append("L_exit:")
+    for n in referenced_regs:
+        if n in written:
+            out.append("    cpu->%s = (lx_u8)%s;" % (n, n))
+    out.append("    cpu->cycles = cyc;")
+    out.append("    if (cyc >= ev)")
+    out.append("        return lx_sched_service(cpu, pc);")
+    out.append("    return pc;")
+    out.append("}")
+    return "\n".join(out) + "\n"

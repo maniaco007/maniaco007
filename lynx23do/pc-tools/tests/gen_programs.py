@@ -23,6 +23,7 @@ import sys
 
 from lynx2c.emit_c import _HEADER, emit_overlay
 from lynx2c.pipeline import analyze
+from lynx2c.routines import DEFAULT_MAX_BLOCKS, roots_of
 from lynx2c import ABI_VERSION, __version__
 from independent import independent_leaders
 from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS, FLOW_MNEMONICS, BR_COND, _LEN
@@ -286,6 +287,7 @@ class Corpus:
         assert set(cfg.blocks) == want, "líderes do CFG divergem do algoritmo independente: %s" % sorted(
             set(cfg.blocks) ^ want)
         pid = len(self.progs)
+        prog["roots"] = set(cfg.blocks) if prog.get("phase", 2) == 1 else roots_of(cfg, prog.get("max_blocks", DEFAULT_MAX_BLOCKS))
         self.progs.append((prog, cfg, ops))
         rng = self.rng
         for _ in range(nvec):
@@ -308,7 +310,8 @@ class Corpus:
             p |= 1
         cpu.set_p(p)
         init = (cpu.a, cpu.x, cpu.y, cpu.s, cpu.pack_p())
-        reason, stop_pc = cpu.run_program(prog["code"], prog["org"], set(cfg.blocks), entry, budget, prog.get("smc", ()))
+        reason, stop_pc = cpu.run_program(prog["code"], prog["org"], set(cfg.blocks), entry, budget, prog.get("smc", ()),
+                                           prog["roots"])
         st = cpu.state()
         # P comparável: no YIELD em bloco conhecido, flags N V Z C MORTOS ali podem estar desatualizados
         # (garantia do tradutor; ver opt.cfg_liveness). Em PC não resolvido: tudo vivo => P exato.
@@ -338,9 +341,10 @@ class Corpus:
         parts = [_HEADER % {"ver": __version__, "abi": ABI_VERSION}]
         lines = []
         for pid, (prog, cfg, ops) in enumerate(self.progs):
-            parts.append(emit_overlay(pid, cfg, ops))
-            lines.append("prog %04d org=$%04X blocos=%d %s%s :: %s" % (
-                pid, prog["org"], len(cfg.blocks), prog.get("name", "aleatorio"),
+            parts.append(emit_overlay(pid, cfg, ops, phase=prog.get("phase", 2),
+                                        max_blocks=prog.get("max_blocks", DEFAULT_MAX_BLOCKS)))
+            lines.append("prog %04d org=$%04X blocos=%d raizes=%d fase=%d maxb=%s %s%s :: %s" % (
+                pid, prog["org"], len(cfg.blocks), len(prog["roots"]), prog.get("phase", 2), prog.get("max_blocks", DEFAULT_MAX_BLOCKS), prog.get("name", "aleatorio"),
                 " [precise]" if prog.get("precise") else "", prog["code"].hex()))
         parts.append("const LxOverlay *const lx_test_ovs[] = {\n%s\n};\nconst unsigned lx_test_novs = %d;\n" % (
             ",\n".join("    &lx_ov%d" % i for i in range(len(self.progs))), len(self.progs)))
@@ -355,7 +359,9 @@ class Corpus:
 
 def build(outdir, n_random=220, nvec_random=40, nvec_directed=120):
     c = Corpus(outdir)
-    for prog in directed_programs():
+    for k, prog in enumerate(directed_programs()):
+        prog["phase"] = 1 if k % 4 == 3 else 2
+        prog["max_blocks"] = [0, 2, 4, DEFAULT_MAX_BLOCKS][k % 4]
         c.add_program(prog, nvec_directed)
     made = 0
     while made < n_random:
@@ -363,6 +369,8 @@ def build(outdir, n_random=220, nvec_random=40, nvec_directed=120):
         if prog is None:
             continue
         prog["precise"] = (made % 3 == 0)      # 1/3 dos programas no modo P exato
+        prog["phase"] = 1 if made % 4 == 0 else 2   # 1/4 na fase 1 (um bloco por função), 3/4 na fase 2 (rotinas fundidas)
+        prog["max_blocks"] = c.rng.choice([0, 0, 2, 3, 5, 8, DEFAULT_MAX_BLOCKS])   # exercita fronteiras, saídas e sub-entradas
         c.add_program(prog, nvec_random)
         made += 1
     c.write()

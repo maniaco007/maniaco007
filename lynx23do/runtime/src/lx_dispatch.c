@@ -42,7 +42,7 @@ lx_u32 lx_dispatch(LxCpu *cpu, lx_u32 pc)
         lx_unresolved(pc);
         return LX_PC_HALT;
     }
-    return e->fn(cpu);
+    return e->fn(cpu, LX_DE_SUB(e->sub_flags));
 }
 
 lx_u32 lx_run(LxCpu *cpu, lx_u32 pc)

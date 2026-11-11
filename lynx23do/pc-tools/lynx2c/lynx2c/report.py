@@ -26,7 +26,7 @@ def _pct(a, b):
 
 def build_report(title, cfg, ops_by_block, image_len, include_dir: Optional[str] = None, arm_opt: str = "-Os",
                  budget_kb: int = 640, smc_operands: Iterable[int] = (), hooks: Iterable[int] = (),
-                 notes: Iterable[str] = (), measure: bool = True) -> str:
+                 notes: Iterable[str] = (), measure: bool = True, phase: int = 2, max_blocks=None) -> str:
     smc_operands, hooks = sorted(smc_operands), sorted(hooks)
     blocks = [cfg.blocks[s] for s in cfg.starts]
     insns = [i for b in blocks for i in b.insns]
@@ -63,13 +63,14 @@ def build_report(title, cfg, ops_by_block, image_len, include_dir: Optional[str]
         with tempfile.TemporaryDirectory() as td:
             c_path = os.path.join(td, "gen.c")
             with open(c_path, "w", encoding="utf-8") as f:
-                f.write(_HEADER % {"ver": __version__, "abi": ABI_VERSION} + "\n" + emit_overlay(0, cfg, ops_by_block))
+                f.write(_HEADER % {"ver": __version__, "abi": ABI_VERSION} + "\n" + emit_overlay(0, cfg, ops_by_block, phase=phase, max_blocks=max_blocks))
             arm = armsize.measure_c(c_path, include_dir, arm_opt)
     elif measure:
         note_arm = "clang/llvm-size indisponíveis: tamanho ARM ESTIMADO pelo fator de referência."
 
     L = ["# Relatório de elegibilidade — %s" % title, "",
-         "_Gerado por lynx2c %s. Fase 1 do gerador (registradores em `LxCpu`); a fase 2 deve reduzir os números de ARM._" % __version__, "",
+         "_Gerado por lynx2c %s. Código medido: **fase %d** do gerador (%s)._" % (
+             __version__, phase, "um bloco por função, registradores em `LxCpu`" if phase == 1 else "rotinas fundidas, registradores em variáveis locais"), "",
          "## Código alcançável", "",
          "| Item | Valor |", "|---|---:|",
          "| Imagem analisada | %d bytes |" % image_len,

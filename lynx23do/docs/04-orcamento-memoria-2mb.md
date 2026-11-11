@@ -55,18 +55,28 @@ Código traduzido pela **fase 1** do gerador (registradores em `LxCpu`), compila
 (2) o código do Dormann testa flags após quase toda operação (flags vivos) — mas ainda assim **69 %** das definições de flag
 foram eliminadas; jogos reais tendem a ser mais favoráveis; (3) é tamanho estático, não desempenho (ver §3.3).
 
-### 3.2 O que a fase 2 precisa atacar (ordenado por ganho esperado)
-1. **Registradores A/X/Y/S e flags em variáveis locais** dentro da rotina (hoje cada acesso é `ldr/str` em `LxCpu`);
-2. **Fundir blocos**: `JSR` como chamada C direta, fall-through sem retorno ao trampolim, soma de ciclos e teste de evento
-   só em arestas de retorno e a cada N blocos (hoje, 11 ARM por bloco);
+### 3.1b MEDIDO (v0.6.0) — fase 2 (rotinas fundidas, registradores locais, limite de 32 blocos/rotina)
+
+| Suíte | Fase 1 (ABI v2) | **Fase 2** | ARM/instr. 65C02 |
+|---|---:|---:|---:|
+| 6502_functional_test | 27,0× | **17,9×** (232 032 B) | **7,1** |
+| 65C02_extended_opcodes_test | 27,8× | **18,5×** (77 760 B) | **7,1** |
+
+Na expansão da fase 2 cabem **~35–36 KB de código 65C02 alcançado em 640 KB** (fase 1: ~23 KB). Achado central: **a fusão sem limite quase não
+ajuda (25,4×) e gera quadro de pilha de 15 KB**, porque ~16 variáveis vivas não cabem nos ~12 registradores do ARM (27% das instruções viram
+spill/reload). Limitar a rotina a 32 blocos dá 17,7× e quadro de 44 B. Detalhes e a varredura completa: `docs/10`.
+
+### 3.2 O que ainda falta atacar (ordenado por ganho esperado; itens 1–2 da lista original já feitos na fase 2)
+1. ~~Registradores e flags em variáveis locais~~ — **feito** (fase 2);
+2. ~~Fundir blocos~~ — **feito em parte**: fall-through/desvios fundidos; falta **`JSR` como chamada C nativa** (fase 2b);
 3. Caminho decimal fora do caminho comum (já fora de linha) e `V`/`C` só quando vivos (já feito);
 4. Forma *cold* compacta (chamadas a ajudantes por opcode) para blocos de baixa contagem no perfil dinâmico.
-**Meta de projeto: ≤ ~10× e ≤ ~6 ARM por instrução 65C02** (docs/01 §6) — o que daria ~64 KB de 65C02 em 640 KB.
+**Meta de projeto: ≤ ~10× e ≤ ~6 ARM por instrução 65C02** (docs/01 §6) — o que daria ~64 KB de 65C02 em 640 KB. **Situação (v0.6.0): 17,9× e 7,1.**
 
 ### 3.3 Elegibilidade (critério objetivo)
 `lynx2c report` mede o **código 65C02 alcançável** e o tamanho **ARM real** do jogo, e dá o veredito de tamanho contra
-`[budget] max_code_kb`. Hoje (fase 1) só jogos com **≲ 23 KB de código alcançado** cabem em 640 KB; a fase 2 é pré-requisito
-para a maioria. Ferramentas de controle: orçamento por jogo, tiers hot/cold guiados pelo perfil dinâmico, `armcc -Ospace` no cold.
+`[budget] max_code_kb`. Hoje (fase 2) cabem jogos com **≲ 35 KB de código alcançado** em 640 KB (fase 1: ≲ 23 KB); a fase 2b e a forma
+*cold* são o caminho para ~64 KB. Ferramentas de controle: orçamento por jogo, tiers hot/cold guiados pelo perfil dinâmico, `armcc -Ospace` no cold.
 
 Por que o orçamento aperta: o ARM60 do 3DO **não tem cache**; código grande também custa banda de busca, não só espaço.
 

@@ -22,7 +22,9 @@ import struct
 import sys
 
 from lynx2c.decode import decode_block
-from lynx2c.emit_c import emit_unit
+from lynx2c.emit_c import _HEADER, emit_functions
+from lynx2c import ABI_VERSION, __version__
+from lynx2c.pipeline import analyze
 from lynx2c.lift import lift
 from lynx2c.opt import flag_liveness
 from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS as _ALL_OPS, FLOW_MNEMONICS
@@ -116,18 +118,19 @@ class Corpus:
 
     def write(self):
         os.makedirs(self.out, exist_ok=True)
-        blocks, lines = [], []
+        phase = int(os.environ.get("LX_PHASE", "2"))
+        parts, names, lines = [_HEADER % {"ver": __version__, "abi": ABI_VERSION}], [], []
         for i, (org, code) in enumerate(self.fns):
-            insns = decode_block(code, org)
-            ops = flag_liveness(lift(insns))
-            blocks.append(("t_%05d" % i, ops, org))
-            lines.append("%05d $%04X %s ; %s" % (i, org, code.hex(), " | ".join(x.text() for x in insns)))
-        src = emit_unit(blocks)
+            cfg, ops = analyze(code, org, [org])            # código reto: 1 bloco => 1 rotina
+            text, where = emit_functions(i, cfg, ops, phase)
+            parts.append(text)
+            names.append(where[org][0])
+            lines.append("%05d $%04X %s ; %s" % (i, org, code.hex(), " | ".join(x.text() for b in cfg.blocks.values() for x in b.insns)))
+        src = "\n".join(parts)
         src += "\nconst LxTestFn lx_test_fns[] = {\n"
-        src += "".join("    t_%05d,\n" % i for i in range(len(self.fns)))
+        src += "".join("    %s,\n" % n for n in names)
         src += "};\nconst unsigned lx_test_nfns = %d;\n" % len(self.fns)
-        src = src.replace('#include "lynx/lx_alu.h"\n',
-                          '#include "lynx/lx_alu.h"\ntypedef lx_u32 (*LxTestFn)(LxCpu *cpu);\n', 1)
+        src = src.replace('#include "lynx/lx_alu.h"\n', '#include "lynx/lx_alu.h"\ntypedef lx_u32 (*LxTestFn)(LxCpu *cpu, lx_u32 entry);\n', 1)
         with open(os.path.join(self.out, "tests_gen.c"), "w", encoding="utf-8") as f:
             f.write(src)
         with open(os.path.join(self.out, "fns.txt"), "w", encoding="utf-8") as f:

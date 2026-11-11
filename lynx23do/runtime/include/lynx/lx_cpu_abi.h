@@ -24,7 +24,8 @@
 #include "lx_types.h"
 #include "lx_config.h"
 
-#define LX_ABI_VERSION 2   /* v2: LX_SCHED_CHECK com chamada final; lx_adc_dec/lx_sbc_dec fora de linha */
+#define LX_ABI_VERSION 3   /* v3: LxCodeFn(cpu, entry) com sub-entradas; macros LX_PUSH8/PULL8/PACK_P/UNPACK_P p/ fase 2;
+                              * v2: LX_SCHED_CHECK com chamada final; lx_adc_dec/lx_sbc_dec fora de linha */
 
 /* Contexto da CPU. Flags N/Z são PREGUIÇOSOS: guardam o valor que os
  * originou; o lynx2c só materializa N/Z quando a análise de vivacidade de
@@ -64,7 +65,20 @@ LX_INLINE void lx_cpu_unpack_p(LxCpu *c, lx_u8 p)
 #define LX_PC_YIELD    0x10001UL  /* ponto de sincronismo: frame pronto p/ apresentar */
 #define LX_PC_HALT     0x10002UL  /* parada (STP/erro fatal controlado)           */
 
-typedef lx_u32 (*LxCodeFn)(LxCpu *cpu);
+/* 'entry' escolhe o líder (sub-entrada) onde a rotina começa: 0 = raiz. Funções de bloco único (fase 1) o ignoram. */
+typedef lx_u32 (*LxCodeFn)(LxCpu *cpu, lx_u32 entry);
+
+/* ---- Fase 2: registradores e flags em VARIÁVEIS LOCAIS da rotina (o código gerado usa estas macros; exigem lx_mem.h) ----
+ * Pilha do 65C02 em $0100-$01FF sobre a variável local 's'. P empacotado a partir das variáveis locais de flag
+ * (B só existe no P EMPILHADO: quem empilha faz '| 0x10'; PLP/RTI o ignoram). */
+#define LX_PUSH8(sv, val)  do { lx_ram[0x100 | (sv)] = (lx_u8)(val); (sv) = ((sv) - 1) & 0xFF; } while (0)
+#define LX_PULL8(sv)       (lx_ram[0x100 | ((sv) = ((sv) + 1) & 0xFF)])
+#define LX_PACK_P(nsrc, v, d, i, zsrc, c) \
+    ((lx_u32)(0x20 | ((nsrc) & 0x80) | ((v) ? 0x40 : 0) | ((d) ? 0x08 : 0) | ((i) ? 0x04 : 0) | \
+              (((zsrc) == 0) ? 0x02 : 0) | ((c) ? 0x01 : 0)))
+#define LX_UNPACK_P(p, nsrc, zsrc, v, d, i, c)                                        \
+    do { lx_u32 lx_p_ = (p); (nsrc) = lx_p_ & 0x80; (zsrc) = (lx_p_ & 0x02) ? 0 : 1;   \
+         (v) = (lx_p_ >> 6) & 1; (d) = (lx_p_ >> 3) & 1; (i) = (lx_p_ >> 2) & 1; (c) = lx_p_ & 1; } while (0)
 
 /* ---- Trampolim e despacho --------------------------------------------------- */
 /* Executa a partir de 'pc' até LX_PC_YIELD/LX_PC_HALT. Chamado pelo laço

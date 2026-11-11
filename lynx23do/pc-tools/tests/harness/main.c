@@ -9,7 +9,7 @@
 #include "lynx/lx_cpu_abi.h"
 #include "lynx/lx_mem.h"
 
-typedef lx_u32 (*LxTestFn)(LxCpu *cpu);
+typedef lx_u32 (*LxTestFn)(LxCpu *cpu, lx_u32 entry);
 extern const LxTestFn lx_test_fns[];
 extern const unsigned lx_test_nfns;
 extern unsigned lx_t_io_n, lx_t_io_overflow, lx_t_misroute;
@@ -82,7 +82,7 @@ int main(int argc, char **argv)
         lx_t_io_n = 0;
         lx_t_misroute = 0;
 
-        ret = lx_test_fns[fn](&cpu);
+        ret = lx_test_fns[fn](&cpu, 0);
 
         if (lx_t_misroute) { ok = 0; why = "E/S roteada ao chip errado"; }
         else if (ret != next_pc) { ok = 0; why = "next_pc"; }

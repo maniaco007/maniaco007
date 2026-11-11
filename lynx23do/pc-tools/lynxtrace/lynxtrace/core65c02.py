@@ -485,16 +485,19 @@ class RefCpu:
         else:
             raise ValueError(mn)
 
-    def run_program(self, image, org, entries, entry_pc, budget, smc_operands=()):
+    def run_program(self, image, org, entries, entry_pc, budget, smc_operands=(), roots=None):
         """Executa uma imagem com fluxo de controle até uma FRONTEIRA DE BLOCO.
 
-        Fronteira = instrução de fluxo, ou próximo PC sequencial que é uma entrada (líder) ou sai da
-        imagem. Em cada fronteira (mesma ordem do código traduzido: LX_SCHED_CHECK e depois despacho):
+        Fronteira = instrução de fluxo, ou próximo PC sequencial que é uma RAIZ (início de função C) ou sai da
+        imagem. Em cada fronteira (mesma ordem do código traduzido: teste de evento e depois despacho):
           1. ciclos >= budget  -> ('yield', pc)
-          2. pc fora de 'entries' -> ('unresolved', pc)
+          2. pc fora de 'entries' (todo líder é despachável) -> ('unresolved', pc)
+        'roots' padrão = entries (fase 1: um bloco por função). Na fase 2 só as raízes das rotinas são fronteiras:
+        cair de um bloco no seguinte DENTRO da mesma rotina não testa evento.
         """
         end = org + len(image)
         entries = set(entries)
+        roots = entries if roots is None else set(roots)
         smc = set(smc_operands)       # bytes de operando IMEDIATO lidos da MEMÓRIA a cada execução (param_operand)
         self.pc = entry_pc
         while True:
@@ -516,7 +519,7 @@ class RefCpu:
             else:
                 self.exec_insn(opcode, operand)
                 self.pc = (addr + n) & 0xFFFF
-            if flow or self.pc in entries or not (org <= self.pc < end):
+            if flow or self.pc in roots or not (org <= self.pc < end):
                 if self.cycles >= budget:
                     return ("yield", self.pc)
                 if self.pc not in entries:

@@ -9,8 +9,10 @@
  *   TIMEOUT pc=$XXXX cycles=N
  * Código de saída: 0 = TRAP, 3 = UNRESOLVED, 4 = TIMEOUT, 2 = erro de uso.
  *
- * Trap = o mesmo PC e os mesmos registradores em 3 YIELDs consecutivos (chunk primo, para não alinhar
- * com laços curtos). A imagem inteira é copiada para a RAM do Lynx: código e dados convivem na mesma RAM.
+ * Trap = o mesmo PC, os mesmos registradores E a RAM inteira idêntica (hash FNV-1a de 64 KB) em 3 YIELDs
+ * consecutivos. Só PC+registradores dava FALSO POSITIVO na fase 2: os pontos de retomada ficam restritos a
+ * instruções de fluxo, então um laço longo que muda só a RAM (o teste decimal) cedia sempre no mesmo PC.
+ * A imagem inteira é copiada para a RAM do Lynx: código e dados convivem na mesma RAM.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +64,7 @@ int main(int argc, char **argv)
     lx_u32 pc, entry, max_cycles, chunk = 100003UL, last_pc = 0xFFFFFFFFUL;
     unsigned same = 0;
     lx_u8 last[5] = { 0, 0, 0, 0, 0 };
+    lx_u32 last_hash = 0;
 
     if (argc < 4) { fprintf(stderr, "uso: %s imagem.bin entrada_hex max_ciclos [chunk]\n", argv[0]); return 2; }
     f = fopen(argv[1], "rb");
@@ -91,9 +94,13 @@ int main(int argc, char **argv)
         pc = lx_t_yield_pc;
         {
             lx_u8 now[5];
+            lx_u32 h = 2166136261UL;
+            unsigned long k;
             now[0] = cpu.a; now[1] = cpu.x; now[2] = cpu.y; now[3] = cpu.s; now[4] = lx_cpu_pack_p(&cpu);
-            if (pc == last_pc && memcmp(now, last, 5) == 0) same++; else same = 0;
+            for (k = 0; k < LX_RAM_SIZE; k++) h = (h ^ lx_ram[k]) * 16777619UL;
+            if (pc == last_pc && memcmp(now, last, 5) == 0 && h == last_hash) same++; else same = 0;
             memcpy(last, now, 5);
+            last_hash = h;
             last_pc = pc;
             if (same >= 2) {
                 printf("TRAP pc=$%04lX cycles=%lu A=%02X X=%02X Y=%02X S=%02X P=%02X\n", (unsigned long)pc,

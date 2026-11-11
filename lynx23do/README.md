@@ -6,12 +6,11 @@ Framework para portar jogos selecionados de Atari Lynx para rodar **nativamente*
 - **Recompilação estática (AOT)** do 65C02 → C89 (sem interpretador em tempo de execução);
 - **HLE do Suzy**: SCBs de sprite viram Cels e são desenhados por `DrawCels()`.
 
-**Estágio atual: v0.5.0 — arquitetura aprovada (D1–D9); tradutor com 178 opcodes (NMOS documentados + 65C02 de uso comum),
-CFG, flags entre blocos, trampolim `lx_run`, SMC de operando imediato e hooks. Suítes de Klaus Dormann (6502 e 65C02 estendida)
-PASSAM pelo pipeline completo. Novo: conjunto de opcodes, ciclos-base e BCD conferidos contra o **Handy** (segunda fonte),
-estágio A (`ingest` .lnx/BS93) e `report.md` de elegibilidade, e **expansão ARM MEDIDA: 27× na fase 1** — só ~23 KB de 65C02
-cabem em 640 KB, então a **fase 2 do gerador é o próximo passo crítico** (docs/04 §3, docs/09).** Ainda sem perfil dinâmico
-(lynxtrace), sem extras de ciclo verificados por fonte independente e sem Cel Engine (de propósito).
+**Estágio atual: v0.6.0 — arquitetura aprovada (D1–D9); tradutor com 178 opcodes, CFG, flags entre blocos, SMC de operando imediato,
+hooks, ingest/report e **fase 2 do gerador** (rotinas fundidas com registradores em variáveis locais, ABI v3). As suítes de Klaus Dormann
+(6502 e 65C02 estendida) PASSAM nas duas fases. **Expansão ARM medida: 27× → 17,9× (7,1 ARM por instrução 65C02)**; cabem ~35 KB de
+65C02 em 640 KB. Achado: o limite de **32 blocos por rotina** pesa mais que a fusão (sem limite: 25×, quadro de pilha de 15 KB). Próximo:
+fase 2b (`JSR` nativo), agendador real, `lynxtrace` dinâmico (docs/10).** Ainda sem Cel Engine (de propósito).
 
 ## Leia nesta ordem
 1. [`docs/01-visao-geral-e-fluxo-de-dados.md`](docs/01-visao-geral-e-fluxo-de-dados.md) — modelo mental ROM → `.iso`
@@ -23,6 +22,7 @@ cabem em 640 KB, então a **fase 2 do gerador é o próximo passo crítico** (do
 7. [`docs/07-fluxo-de-controle.md`](docs/07-fluxo-de-controle.md) — CFG, JSR/RTS, flags entre blocos, mutação
 8. [`docs/08-conjunto-65c02-e-validacao-independente.md`](docs/08-conjunto-65c02-e-validacao-independente.md) — 178 opcodes, Dormann, limites
 9. [`docs/09-fontes-independentes-medicao-arm-e-ingest.md`](docs/09-fontes-independentes-medicao-arm-e-ingest.md) — Handy, expansão ARM medida, ingest/report
+10. [`docs/10-fase2-gerador.md`](docs/10-fase2-gerador.md) — rotinas fundidas, 17,9×, o limite de blocos, bugs achados
 
 ## Estrutura
 ```
@@ -52,7 +52,7 @@ Fora deste diretório (raiz do repositório):
 ```
 lynx23do/scripts/check_headers.sh          # headers em C89 estrito (gcc), configs host e 3DO
 scripts/check_backups_immutable.sh         # backups/ só recebe adições
-lynx23do/pc-tools/tests/run_diff.sh        # 101 unitários + diferencial (895 mil vetores de blocos + 10 mil de programas, -O0/-O2)
+lynx23do/pc-tools/tests/run_diff.sh        # 114 unitários + diferencial (895 mil vetores de blocos + 10 mil de programas, -O0/-O2)
 lynx23do/pc-tools/tests/functional/run_dormann.sh   # suítes de Klaus Dormann (baixa e confere SHA-256; precisa de rede)
 ```
 O armcc/SDK 3DO **não** está disponível neste ambiente; a compatibilidade com o SDK

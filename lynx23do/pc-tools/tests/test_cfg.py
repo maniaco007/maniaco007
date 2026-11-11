@@ -161,7 +161,7 @@ class TestEmitStructure(unittest.TestCase):
     def test_overlay_tables_sorted_and_complete(self):
         cfg, ops = analyze(PROG, 0x200, [0x200])
         c = emit_overlay(0, cfg, ops)
-        addrs = [int(x, 16) for x in __import__("re").findall(r"\{ 0x([0-9A-F]{4}), (?:0|LX_DE_RETADDR), lx_ov0_", c)]
+        addrs = [int(x, 16) for x in __import__("re").findall(r"\{ 0x([0-9A-F]{4}), 0x[0-9A-F]{4} \| (?:0|LX_DE_RETADDR), lx_ov0_", c)]
         self.assertEqual(addrs, sorted(cfg.blocks))
         self.assertIn("LX_DE_RETADDR", c)
         self.assertIn("const LxOverlay lx_ov0", c)

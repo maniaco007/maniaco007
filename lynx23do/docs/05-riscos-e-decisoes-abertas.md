@@ -23,8 +23,8 @@ HLE/memória ainda não implementadas.
 | # | Risco | Impacto | Mitigação |
 |---|---|---|---|
 | R1 | **Código que não existe estaticamente** (SMC, rotinas geradas em RAM, descompressão para RAM executável) | pode inviabilizar um jogo | Detecção no trace; hook HLE por jogo; critério de elegibilidade (§3 de `04`) |
-| R2 | **Orçamento de CPU** (~6 ARM/instr 65C02) | jogo lento | **medido (estático): 11,1 ARM/instr na fase 1** (docs/04 §3) — ~2× acima da meta; fase 2 (registradores em locais, fusão de blocos) é o remédio; desempenho dinâmico ainda não medido |
-| R3 | **Tamanho do código traduzido** (640 KB) | jogo não cabe | **MEDIDO: 27× na fase 1 ⇒ ~23 KB de 65C02 em 640 KB** (docs/04 §3). `lynx2c report` mede o jogo real; **fase 2 é pré-requisito** |
+| R2 | **Orçamento de CPU** (~6 ARM/instr 65C02) | jogo lento | **medido (estático): 11,1 ARM/instr na fase 1 → 7,1 na fase 2** (docs/10) — perto da meta (~6); fase 2b (`JSR` nativo) falta; desempenho dinâmico ainda não medido |
+| R3 | **Tamanho do código traduzido** (640 KB) | jogo não cabe | **MEDIDO: 27× (fase 1) → 17,9× (fase 2) ⇒ ~35 KB de 65C02 em 640 KB** (docs/04 §3, docs/10). `lynx2c report` mede o jogo real; meta ≤10× exige fase 2b + forma *cold* |
 | R4 | **Colisão** (Suzy→depósito no SCB) sem equivalente no Cel Engine | jogabilidade errada | `BBOX`/`PIXEL`; escolha por jogo |
 | R5 | **Fidelidade de escala/distorção** (acumuladores do Suzy vs. matriz do CCB; STRETCH, TILT+flip) | artefatos visuais | classificação `NATIVE/APPROX/FALLBACK` + diff host-vs-referência por frame |
 | R6 | **Temporização** (timers, IRQ em fronteira de bloco, `busy`) | travas em *vsync-wait*, áudio fora | ciclos por bloco; verificação obrigatória em arestas de retorno |
