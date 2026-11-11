@@ -23,8 +23,8 @@ HLE/memória ainda não implementadas.
 | # | Risco | Impacto | Mitigação |
 |---|---|---|---|
 | R1 | **Código que não existe estaticamente** (SMC, rotinas geradas em RAM, descompressão para RAM executável) | pode inviabilizar um jogo | Detecção no trace; hook HLE por jogo; critério de elegibilidade (§3 de `04`) |
-| R2 | **Orçamento de CPU** (~6 ARM/instr 65C02) | jogo lento | flags preguiçosos + vivacidade, hot/cold, medir cedo com um jogo-piloto simples |
-| R3 | **Tamanho do código traduzido** (640 KB) | jogo não cabe | `report.md` com estimativa **antes** de traduzir; tiers; orçamento por jogo |
+| R2 | **Orçamento de CPU** (~6 ARM/instr 65C02) | jogo lento | **medido (estático): 11,1 ARM/instr na fase 1** (docs/04 §3) — ~2× acima da meta; fase 2 (registradores em locais, fusão de blocos) é o remédio; desempenho dinâmico ainda não medido |
+| R3 | **Tamanho do código traduzido** (640 KB) | jogo não cabe | **MEDIDO: 27× na fase 1 ⇒ ~23 KB de 65C02 em 640 KB** (docs/04 §3). `lynx2c report` mede o jogo real; **fase 2 é pré-requisito** |
 | R4 | **Colisão** (Suzy→depósito no SCB) sem equivalente no Cel Engine | jogabilidade errada | `BBOX`/`PIXEL`; escolha por jogo |
 | R5 | **Fidelidade de escala/distorção** (acumuladores do Suzy vs. matriz do CCB; STRETCH, TILT+flip) | artefatos visuais | classificação `NATIVE/APPROX/FALLBACK` + diff host-vs-referência por frame |
 | R6 | **Temporização** (timers, IRQ em fronteira de bloco, `busy`) | travas em *vsync-wait*, áudio fora | ciclos por bloco; verificação obrigatória em arestas de retorno |
@@ -32,7 +32,7 @@ HLE/memória ainda não implementadas.
 | R8 | **Boot cifrado e ROM de boot** | não dá p/ rodar o trace sem imagem de boot | o usuário fornece a imagem p/ o `lynxtrace`; saída não a contém; suporte a homebrew sem cifra |
 | R9 | **Áudio do Mikey** (4 canais, LFSR) | sem som / fora de tempo | fora do escopo desta fase; interface reservada em `lx_mikey_*` |
 | R10 | **Pouco acesso ao SDK/hardware aqui** | assinaturas/formatos do CCB errados | tudo marcado `[VERIFY]`; backend 3DO só após conferência com a doc; headers validados em C89 no host |
-| R11 | **Divergências de ISA** (Lynx tem BBR/BBS/RMB/SMB? WAI/STP?) | opcodes faltando | confirmar na documentação ao escrever o decoder; teste exaustivo |
+| R11 | **Divergências de ISA** (Lynx tem BBR/BBS/RMB/SMB? WAI/STP?) | opcodes faltando | **resolvido contra o Handy** (docs/09 §1): sem Rockwell; tem `WAI`/`STP`, que faltam implementar (dependem do agendador) |
 
 ## 3. O que está explicitamente fora do escopo agora
 Parser/decodificador de opcodes 65C02; geração de código dos opcodes; inicialização do

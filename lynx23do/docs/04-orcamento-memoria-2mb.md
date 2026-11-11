@@ -23,24 +23,52 @@
 | **Total** | **1824** | folga ≈ 224 KB |
 
 ## 3. Expansão de código e elegibilidade de jogos
+
 Expansão = bytes ARM gerados por byte de 65C02 de código (não de dado).
-Estimativas, a confirmar com o estágio E:
 
-| Forma | ARM por instr. 65C02 | Bytes ARM por byte 65C02 (~2 B/instr) |
-|---|---|---|
-| ingênua (flags sempre materializados) | ~15–25 | ~30–50 |
-| hot, com vivacidade de flags + regiões | ~5–9 | ~10–18 |
-| cold (helpers compactos) | ~3–4 (chamadas) | ~6–8 |
+### 3.1 MEDIDO (v0.5.0) — substitui a hipótese anterior
 
-Com 640 KB de código: **~35–60 KB** de 65C02 em forma *hot* (~10–18×), ou **~80–100 KB**
-em *cold*. Hipótese de trabalho: jogos com **≲ 60–80 KB de código 65C02 efetivamente
-alcançado** (medido pelo trace, não pelo tamanho do `.lnx`) são candidatos. O estágio
-de *profiling* emite esse número **antes** de qualquer tradução (`report.md`); é o
-critério objetivo de elegibilidade. Ferramentas de controle: orçamento por jogo
-(`[budget] max_code_kb`), tiers hot/cold guiados por contagem, `armcc -Ospace` no cold.
+Código traduzido pela **fase 1** do gerador (registradores em `LxCpu`), compilado com **clang -Os para ARM big-endian**
+(ARM7TDMI/ARMv4, modo ARM; `lynx2c report` / `armsize.py`). Código-alvo: as duas suítes de Dormann (código real e variado):
 
-Por que o orçamento aperta: o ARM60 do 3DO **não tem cache**; código grande também
-custa banda de busca, não só espaço.
+| Suíte | Instr. 65C02 | Bytes 65C02 | ARM total | **Expansão** | ARM/instr. 65C02 |
+|---|---:|---:|---:|---:|---:|
+| 6502_functional_test, ABI v1 | 7 395 | 12 983 | 418 088 B | 32,2× | 13,4 |
+| 6502_functional_test, **ABI v2** | 7 395 | 12 983 | 350 040 B | **27,0×** | **11,1** |
+| 65C02_extended_opcodes_test, ABI v1 | 2 472 | 4 201 | 142 024 B | 33,8× | 13,6 |
+| 65C02_extended_opcodes_test, **ABI v2** | 2 472 | 4 201 | 116 724 B | **27,8×** | **11,1** |
+
+(O total inclui a tabela de despacho: 8 bytes por bloco.)
+
+**Para onde vai o código** (`tools/opcode_cost.py`: um bloco de 1 instrução por opcode; ARM v2):
+- **custo fixo por bloco: 11 instruções ARM** (era 18): prólogo/epílogo, soma de ciclos, teste de evento. Com ~2,9 instruções
+  65C02 por bloco isso sozinho é ~3,8 ARM por instrução 65C02;
+- custo líquido por opcode: **mediana 10, média 14, máximo 58**; `ADC`/`SBC` ~43–55 (caminho decimal + V/C/N/Z), `BRK` 58,
+  modos `(zp,X)`/`(zp),Y` ~25–30;
+- ganhos já obtidos na fase 1 (v0.5.0): `LX_SCHED_CHECK` com chamada final (sem quadro de pilha no caminho comum) e
+  ajudantes decimais fora de linha — **−16% de código**, nada regrediu (diferencial + Dormann).
+
+**Consequência para o orçamento de 640 KB de código:** na expansão medida cabem **~23–24 KB de código 65C02 alcançado**
+(antes: "~60–80 KB"). A hipótese de 10–18× para a forma *hot* **não** vale na fase 1.
+
+**Ressalvas:** (1) o clang -Os costuma gerar código **menor** que o armcc 2.x do SDK 3DO: tratar como **piso**;
+(2) o código do Dormann testa flags após quase toda operação (flags vivos) — mas ainda assim **69 %** das definições de flag
+foram eliminadas; jogos reais tendem a ser mais favoráveis; (3) é tamanho estático, não desempenho (ver §3.3).
+
+### 3.2 O que a fase 2 precisa atacar (ordenado por ganho esperado)
+1. **Registradores A/X/Y/S e flags em variáveis locais** dentro da rotina (hoje cada acesso é `ldr/str` em `LxCpu`);
+2. **Fundir blocos**: `JSR` como chamada C direta, fall-through sem retorno ao trampolim, soma de ciclos e teste de evento
+   só em arestas de retorno e a cada N blocos (hoje, 11 ARM por bloco);
+3. Caminho decimal fora do caminho comum (já fora de linha) e `V`/`C` só quando vivos (já feito);
+4. Forma *cold* compacta (chamadas a ajudantes por opcode) para blocos de baixa contagem no perfil dinâmico.
+**Meta de projeto: ≤ ~10× e ≤ ~6 ARM por instrução 65C02** (docs/01 §6) — o que daria ~64 KB de 65C02 em 640 KB.
+
+### 3.3 Elegibilidade (critério objetivo)
+`lynx2c report` mede o **código 65C02 alcançável** e o tamanho **ARM real** do jogo, e dá o veredito de tamanho contra
+`[budget] max_code_kb`. Hoje (fase 1) só jogos com **≲ 23 KB de código alcançado** cabem em 640 KB; a fase 2 é pré-requisito
+para a maioria. Ferramentas de controle: orçamento por jogo, tiers hot/cold guiados pelo perfil dinâmico, `armcc -Ospace` no cold.
+
+Por que o orçamento aperta: o ARM60 do 3DO **não tem cache**; código grande também custa banda de busca, não só espaço.
 
 ## 4. Tabelas de despacho
 8 bytes/entrada (`LxDispatchEntry`). Só entram alvos de `JMP` indireto, continuações

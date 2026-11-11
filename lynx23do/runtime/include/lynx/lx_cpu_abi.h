@@ -24,7 +24,7 @@
 #include "lx_types.h"
 #include "lx_config.h"
 
-#define LX_ABI_VERSION 1
+#define LX_ABI_VERSION 2   /* v2: LX_SCHED_CHECK com chamada final; lx_adc_dec/lx_sbc_dec fora de linha */
 
 /* Contexto da CPU. Flags N/Z são PREGUIÇOSOS: guardam o valor que os
  * originou; o lynx2c só materializa N/Z quando a análise de vivacidade de
@@ -95,13 +95,14 @@ extern lx_u32 lx_unresolved_count;
  * SPRSYS/busy do Suzy e pode DESVIAR para o vetor de IRQ (empilha PC e P). */
 lx_u32 lx_sched_service(LxCpu *cpu, lx_u32 next_pc);
 
+/* lx_sched_service() devolve 'next_pc' quando nada aconteceu (ou o PC do vetor de IRQ / LX_PC_YIELD): por isso o
+ * retorno dela É o retorno do bloco. Com CHAMADA FINAL o compilador não precisa de quadro de pilha no caminho
+ * comum (medido: o custo fixo por bloco caiu de 18 para poucas instruções ARM; ver docs/04 §3). */
 #define LX_SCHED_CHECK(cpu, ncycles, next_pc)                              \
     do {                                                                    \
         (cpu)->cycles += (ncycles);                                         \
-        if ((cpu)->cycles >= (cpu)->next_event) {                           \
-            lx_u32 lx_r_ = lx_sched_service((cpu), (next_pc));              \
-            if (lx_r_ != (lx_u32)(next_pc)) return lx_r_;                   \
-        }                                                                   \
+        if ((cpu)->cycles >= (cpu)->next_event)                             \
+            return lx_sched_service((cpu), (next_pc));                      \
     } while (0)
 
 #endif /* LX_CPU_ABI_H */

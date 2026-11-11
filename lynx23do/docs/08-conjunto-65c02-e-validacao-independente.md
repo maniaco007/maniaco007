@@ -88,6 +88,8 @@ atribuída (divergência real × erro de compilação). Mutantes **equivalentes*
 - O oráculo próprio continua escrito por nós; o ganho desta versão é justamente ter **duas suítes de terceiros** concordando.
 - Nada compilado com o armcc do SDK 3DO.
 
+> v0.5.0 atualizou parte destes limites (opcodes/ciclos-base/BCD contra o Handy; expansão ARM medida) — ver `docs/09`.
+
 ## 6. Próximos passos sugeridos
 1. **Ciclos**: obter uma fonte independente (documentação do CPU do Lynx/emulador) e transformar os `[VERIFY]` em testes.
 2. **`lynxtrace` com perfil dinâmico + estágios A–C** (`ingest`, `discover`, `report.md`): o laço de sementes iterativas que já

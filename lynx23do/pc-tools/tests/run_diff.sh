@@ -26,11 +26,12 @@ INC="-I$PROJ/runtime/include"
 STRICT="-std=c89 -pedantic -Wall -Wextra -Werror"
 for O in ${OPTS:--O0 -O2}; do
   $CC $STRICT $O $INC -c "$PROJ/runtime/src/lx_mem.c" -o "$OUT/lx_mem$O.o"
+  $CC $STRICT $O $INC -c "$PROJ/runtime/src/lx_alu.c" -o "$OUT/lx_alu$O.o"
   $CC $STRICT $O $INC -c "$HERE/harness/lx_test_stubs.c" -o "$OUT/stubs$O.o"
   if [ -z "${SKIP_BLOCKS:-}" ]; then
     $CC $STRICT $O $INC -c "$OUT/tests_gen.c" -o "$OUT/tests_gen$O.o"
     $CC $STRICT $O $INC -c "$HERE/harness/main.c" -o "$OUT/main$O.o"
-    $CC $O "$OUT/tests_gen$O.o" "$OUT/lx_mem$O.o" "$OUT/stubs$O.o" "$OUT/main$O.o" -o "$OUT/harness$O"
+    $CC $O "$OUT/tests_gen$O.o" "$OUT/lx_mem$O.o" "$OUT/lx_alu$O.o" "$OUT/stubs$O.o" "$OUT/main$O.o" -o "$OUT/harness$O"
   fi
   # programas com fluxo de controle: trampolim REAL (lx_dispatch/lx_overlay)
   $CC $STRICT $O $INC -c "$OUT/progs_gen.c" -o "$OUT/progs_gen$O.o"
@@ -38,13 +39,14 @@ for O in ${OPTS:--O0 -O2}; do
   $CC $STRICT $O $INC -c "$PROJ/runtime/src/lx_overlay.c" -o "$OUT/lx_overlay$O.o"
   $CC $STRICT $O $INC -c "$HERE/harness/main_prog.c" -o "$OUT/main_prog$O.o"
   $CC $O "$OUT/progs_gen$O.o" "$OUT/lx_mem$O.o" "$OUT/lx_dispatch$O.o" "$OUT/lx_overlay$O.o" \
-      "$OUT/stubs$O.o" "$OUT/main_prog$O.o" -o "$OUT/harness_prog$O"
+      "$OUT/lx_alu$O.o" "$OUT/stubs$O.o" "$OUT/main_prog$O.o" -o "$OUT/harness_prog$O"
 done
 
 echo "== 4/4 executando vetores"
 rc=0
 for O in ${OPTS:--O0 -O2}; do
-  [ -z "${SKIP_BLOCKS:-}" ] && { echo "-- $O (blocos retos)"; "$OUT/harness$O" "$OUT/vectors.bin" || rc=$?; }
-  echo "-- $O (programas)";      "$OUT/harness_prog$O" "$OUT/programs.bin" || rc=$?
+  # vigia: um runtime defeituoso (ex.: ciclos que não avançam) faria os laços do corpus nunca terminarem
+  [ -z "${SKIP_BLOCKS:-}" ] && { echo "-- $O (blocos retos)"; timeout "${HARNESS_TIMEOUT:-300}" "$OUT/harness$O" "$OUT/vectors.bin" || { rc=$?; [ $rc -eq 124 ] && echo "TEMPO ESGOTADO (possível não-terminação)"; }; }
+  echo "-- $O (programas)";      timeout "${HARNESS_TIMEOUT:-300}" "$OUT/harness_prog$O" "$OUT/programs.bin" || { rc=$?; [ $rc -eq 124 ] && echo "TEMPO ESGOTADO (possível não-terminação)"; }
 done
 exit $rc

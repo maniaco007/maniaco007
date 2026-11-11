@@ -39,6 +39,7 @@ def main():
     ap.add_argument("--max-rounds", type=int, default=60)
     ap.add_argument("--smc-operand", type=lambda s: int(s, 0), action="append", default=[], metavar="ADDR",
                     help="byte de operando IMEDIATO modificado em execução (param_operand); repetível")
+    ap.add_argument("--report", metavar="ARQUIVO.md", help="escreve o relatório de elegibilidade da última rodada (mede ARM com clang)")
     ap.add_argument("--skip", action="append", default=[], metavar="DE:PARA",
                     help="hook HLE que pula um trecho auto-modificável: PC DE desvia para PARA (até 4)")
     a = ap.parse_args()
@@ -50,7 +51,7 @@ def main():
         sys.exit("imagem maior que 64 KB")
     seeds = {a.entry} | {int(x.split(':')[0], 0) for x in a.skip}   # hook exige fronteira de bloco no PC de origem
     inc = "-I" + os.path.join(PROJ, "runtime", "include")
-    srcs = [os.path.join(PROJ, "runtime", "src", s) for s in ("lx_mem.c", "lx_dispatch.c", "lx_overlay.c")]
+    srcs = [os.path.join(PROJ, "runtime", "src", s) for s in ("lx_mem.c", "lx_dispatch.c", "lx_overlay.c", "lx_alu.c")]
     srcs += [os.path.join(PROJ, "pc-tools", "tests", "harness", "lx_test_stubs.c"), os.path.join(HERE, "functional_main.c")]
 
     for rnd in range(1, a.max_rounds + 1):
@@ -83,6 +84,14 @@ def main():
             seeds.add(pc)
             continue
         m = re.match(r"TRAP pc=\$([0-9A-F]{4})", out)
+        if m and a.report:
+            from lynx2c.report import build_report
+            rep = build_report(os.path.basename(a.image), cfg, ops, len(image), include_dir=os.path.join(PROJ, "runtime", "include"),
+                               smc_operands=a.smc_operand, hooks={int(x.split(':')[0], 0) for x in a.skip},
+                               notes=["imagem funcional com %d sementes dinâmicas descobertas em execução" % (len(seeds) - 1 - len(a.skip))])
+            with open(a.report, "w", encoding="utf-8") as f:
+                f.write(rep)
+            print("relatório: %s" % a.report)
         if m:
             pc = int(m.group(1), 16)
             ok = pc == a.success
