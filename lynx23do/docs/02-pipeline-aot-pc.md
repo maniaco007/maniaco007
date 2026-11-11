@@ -108,8 +108,8 @@ Cada instrução vira micro-operações explícitas com **definição de flags**
 (`defs: N Z C V`), leitura (`uses`), região de memória do operando
 (`RAM | SUZY | MIKEY | ROMVEC | DYNAMIC`) e custo em ciclos (inclui +1 de
 cruzamento de página onde aplicável, tratado como pior caso ou como teste dinâmico
-no *cold tier*). Cobre também o *subset* exato do núcleo (confirmar se o Lynx tem
-`BBR/BBS/RMB/SMB` da Rockwell e `WAI/STP`; **não presumir**).
+no *cold tier*). Cobre também o *subset* exato do núcleo — **resolvido (docs/12 §2)**: o Lynx I não tem
+`BBR/BBS/RMB/SMB` (NOPs), o Lynx II tem; `CB`/`DB` (`WAI/STP`) são NOP de 1 byte; modelos `core`/`lynx1`/`lynx2` no `lynx2c`.
 
 ### E. `optimize`
 1. **Vivacidade de flags** (backward, por bloco + entre blocos): só materializa N/Z/C/V

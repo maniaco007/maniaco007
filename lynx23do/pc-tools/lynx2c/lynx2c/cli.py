@@ -20,6 +20,7 @@ from . import __version__
 from .decode import DecodeError, decode_block
 from .emit_c import _HEADER as _H1, emit_image, emit_overlay, emit_program
 from .ingest import IngestError, ingest
+from .optable import Optable
 from .pipeline import analyze
 from .report import build_report
 
@@ -35,6 +36,21 @@ _org_given = False
 
 def _int(s):
     return int(s, 0)
+
+
+def _cpu(a, info=None) -> str:
+    """Modelo de CPU: --cpu explícito vence; senão o do cabeçalho (LNX2 Lynx II); senão Lynx I."""
+    if getattr(a, "cpu", None):
+        return a.cpu
+    return info.cpu if info is not None else "lynx1"
+
+
+def _warn_undoc(cfg):
+    """NOPs indocumentados decodificados: o hardware os executa, mas podem ser DADO tomado por código."""
+    if cfg.undoc:
+        shown = " ".join("$%04X" % x for x in cfg.undoc[:8]) + (" ..." if len(cfg.undoc) > 8 else "")
+        print("aviso: %d NOP(s) indocumentado(s) decodificado(s) (CPU %s): %s — confira se não é dado; use --cpu core para recusá-los"
+              % (len(cfg.undoc), cfg.model, shown), file=sys.stderr)
 
 
 def _load_bytes(args) -> bytes:
@@ -55,10 +71,11 @@ def _build_cmd(a, data) -> int:
             print("erro: .lnx comercial exige o perfil dinâmico (ROM de boot do usuário); use BS93 ou imagem plana", file=sys.stderr)
             return 2
         entries = a.entry or [info.entry]
-        cfg, ops = analyze(info.data, info.load_addr, entries, False, a.smc_operand or (), a.hook or ())
+        cfg, ops = analyze(info.data, info.load_addr, entries, False, a.smc_operand or (), a.hook or (), _cpu(a, info))
     except (IngestError, DecodeError, ValueError) as e:
         print("erro: %s" % e, file=sys.stderr)
         return 2
+    _warn_undoc(cfg)
     os.makedirs(a.out_dir, exist_ok=True)
     gen = _HDR + emit_overlay(0, cfg, ops, phase=a.phase, max_blocks=a.max_blocks) + "\n" + emit_program(a.name)
     with open(os.path.join(a.out_dir, a.name + "_gen.c"), "w", encoding="utf-8") as f:
@@ -81,7 +98,7 @@ def _ingest_cmds(a, data) -> int:
     if info.kind == "lnx":
         print("nome: %r | fabricante: %r | rotação: %s | AUDIN: %s | EEPROM: %d" % (
             info.name, info.manufacturer, info.rotation, info.audin, info.eeprom))
-        print("banco 0: %d KB | banco 1: %d KB" % (info.bank0_bytes // 1024, info.bank1_bytes // 1024))
+        print("banco 0: %d KB | banco 1: %d KB | CPU: %s" % (info.bank0_bytes // 1024, info.bank1_bytes // 1024, info.cpu))
     else:
         print("carga em $%04X, entrada $%04X, %d bytes" % (info.load_addr, info.entry, len(info.data)))
     for w in info.warnings:
@@ -94,14 +111,19 @@ def _ingest_cmds(a, data) -> int:
         return 0
     entries = a.entry or [info.entry]
     try:
-        cfg, ops = analyze(info.data, info.load_addr, entries, False, a.smc_operand or (), a.hook or ())
+        cfg, ops = analyze(info.data, info.load_addr, entries, False, a.smc_operand or (), a.hook or (), _cpu(a, info))
     except (DecodeError, ValueError) as e:
         print("erro: %s" % e, file=sys.stderr)
         return 2
+    _warn_undoc(cfg)
+    notes = list(info.warnings)
+    if cfg.undoc:
+        notes.append("%d NOP(s) indocumentado(s) decodificado(s) (CPU %s): %s — confira se não é dado" % (
+            len(cfg.undoc), cfg.model, " ".join("$%04X" % x for x in cfg.undoc[:12]) + (" ..." if len(cfg.undoc) > 12 else "")))
     inc = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "runtime", "include")
     rep = build_report(a.file or "(hex)", cfg, ops, len(info.data), include_dir=inc, arm_opt=a.arm_opt,
                        budget_kb=a.budget_kb, smc_operands=a.smc_operand or (), hooks=a.hook or (),
-                       notes=info.warnings, measure=not a.no_arm)
+                       notes=notes, measure=not a.no_arm)
     if a.out == "-":
         sys.stdout.write("\n" + rep)
     else:
@@ -130,6 +152,10 @@ def main(argv=None) -> int:
             s.add_argument("--name", default="game")
             s.add_argument("--phase", type=int, choices=(1, 2), default=2)
             s.add_argument("--max-blocks", type=int, default=None)
+        if name in ("translate", "disasm", "cfg", "report", "build"):
+            s.add_argument("--cpu", choices=("core", "lynx1", "lynx2"), default=None,
+                           help="modelo de CPU (padrão: do cabeçalho LNX2, senão lynx1): core = só os 178 opcodes "
+                                "documentados (estrito); lynx1 = + NOPs indocumentados; lynx2 = + Rockwell RMB/SMB/BBR/BBS")
         if name in ("translate", "cfg", "report", "build"):
             s.add_argument("--entry", type=_int, action="append", default=None,
                            help="entrada adicional (repetível); padrão: --org")
@@ -157,7 +183,7 @@ def main(argv=None) -> int:
         return _build_cmd(a, data)
     if a.cmd == "disasm":
         try:
-            insns = decode_block(data, a.org)
+            insns = decode_block(data, a.org, Optable(model=_cpu(a)))
         except DecodeError as e:
             print("erro: %s" % e, file=sys.stderr)
             return 2
@@ -167,10 +193,12 @@ def main(argv=None) -> int:
 
     entries = a.entry or [a.org]
     try:
-        cfg, ops = analyze(data, a.org, entries, getattr(a, "precise_exits", False), a.smc_operand or (), a.hook or ())
+        cfg, ops = analyze(data, a.org, entries, getattr(a, "precise_exits", False), a.smc_operand or (), a.hook or (),
+                           _cpu(a))
     except (DecodeError, ValueError) as e:
         print("erro: %s" % e, file=sys.stderr)
         return 2
+    _warn_undoc(cfg)
 
     if a.cmd == "cfg":
         for s in cfg.starts:

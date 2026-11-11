@@ -5,15 +5,15 @@ Fonte externa (somente leitura, NAO redistribuida aqui): src/m6502_timing.h do
 drhelius/Gearlynx (GPLv3). So FATOS (numeros de hardware) sao comparados; nenhum codigo
 e copiado. Uso:
     crosscheck_gearlynx.py /caminho/para/Gearlynx/src/m6502_timing.h
-Saida: divergencias de ciclo/tamanho e os opcodes que o Lynx executa e nos nao decodificamos
-(NOPs multi-byte do Lynx I; RMB/SMB/BBR/BBS do Lynx II). Codigo de saida 1 se houver divergencia.
+Compara TODOS os 256 opcodes de cada modelo (lynx1, lynx2) em ciclos e tamanhos. Codigo de saida 1 se houver
+divergencia ou opcode ausente.
 """
-import json
 import re
 import sys
 from pathlib import Path
 
-OPTABLE = Path(__file__).resolve().parent.parent / "lynx2c" / "optable.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from lynx2c.optable import Optable  # noqa: E402
 
 
 def _table(src, name):
@@ -32,25 +32,22 @@ def main(argv):
         print(__doc__)
         return 2
     src = Path(argv[1]).read_text()
-    c1 = _table(src, "k_m6502_opcode_cycles_lynx1")
-    c2 = _table(src, "k_m6502_opcode_cycles_lynx2")
-    s1 = _table(src, "k_m6502_opcode_sizes_lynx1")
-    s2 = _table(src, "k_m6502_opcode_sizes_lynx2")
-    d = json.loads(OPTABLE.read_text())
-    mine = {int(o["opcode"], 16): o for o in d["ops"]}
+    tabs = {"lynx1": (_table(src, "k_m6502_opcode_cycles_lynx1"), _table(src, "k_m6502_opcode_sizes_lynx1")),
+            "lynx2": (_table(src, "k_m6502_opcode_cycles_lynx2"), _table(src, "k_m6502_opcode_sizes_lynx2"))}
     bad = 0
-    for op, o in sorted(mine.items()):
-        size = d["modes"][o["mode"]]["bytes"]
-        for tag, cyc, siz in (("lynx1", c1, s1), ("lynx2", c2, s2)):
-            if o["cycles"] != cyc[op] or size != siz[op]:
+    for model, (cyc, siz) in tabs.items():
+        t = Optable(model=model)
+        for op in range(256):
+            i = t.get(op)
+            if i is None:
+                bad += 1
+                print("FALTA %s %02X: o Gearlynx executa (c=%d b=%d)" % (model, op, cyc[op], siz[op]))
+            elif (i.cycles, i.length) != (cyc[op], siz[op]):
                 bad += 1
                 print("DIVERGE %s %02X %s: nosso c=%d b=%d / gearlynx c=%d b=%d"
-                      % (tag, op, o["mnemonic"], o["cycles"], size, cyc[op], siz[op]))
-    print("opcodes comparados: %d (Lynx I e II), divergencias: %d" % (len(mine), bad))
-    for tag, cyc, siz in (("Lynx I", c1, s1), ("Lynx II", c2, s2)):
-        miss = [(i, cyc[i], siz[i]) for i in range(256) if i not in mine and cyc[i] != 1]
-        print("%s: executa e nao decodificamos (op, ciclos, bytes): %s"
-              % (tag, ", ".join("%02X/%d/%d" % t for t in miss)))
+                      % (model, op, i.mnemonic, i.cycles, i.length, cyc[op], siz[op]))
+        print("%s: %d opcodes na nossa tabela; comparados com o Gearlynx (ciclos e tamanhos)" % (model, len(t.by_opcode)))
+    print("divergencias: %d" % bad)
     return 1 if bad else 0
 
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 from .decode import DecodeError, Insn, decode_one
+from .optable import Optable
 
 
 class OverlapError(DecodeError):
@@ -49,6 +50,8 @@ class Cfg:
     entries: List[int]
     blocks: Dict[int, Block] = field(default_factory=dict)
     live_in: Dict[int, frozenset] = field(default_factory=dict)   # preenchido por cfg_liveness
+    undoc: List[int] = field(default_factory=list)   # endereços de NOPs INDOCUMENTADOS decodificados (aviso: podem ser dado)
+    model: str = "lynx1"                              # modelo de CPU usado na decodificação (core|lynx1|lynx2)
 
     @property
     def starts(self) -> List[int]:
@@ -56,10 +59,14 @@ class Cfg:
 
 
 def build_cfg(image: bytes, org: int, entries: Iterable[int], smc_operands: Iterable[int] = (),
-              hooks: Iterable[int] = ()) -> Cfg:
+              hooks: Iterable[int] = (), table: Optable = None) -> Cfg:
     """smc_operands: endereços de bytes de OPERANDO modificados em execução (política param_operand,
     docs/02 §6). Suportado: operando de instrução IMEDIATA (lido da RAM a cada execução). Erro explícito se
-    o byte alterado for um OPCODE, ou se pertencer a instrução de outro modo (ainda não suportado)."""
+    o byte alterado for um OPCODE, ou se pertencer a instrução de outro modo (ainda não suportado).
+
+    table: tabela de opcodes (Optable por modelo; padrão = Lynx I). Com 'core' qualquer opcode fora dos 178
+    documentados é erro explícito; com lynx1/lynx2 os NOPs indocumentados são decodificados (hardware real) e
+    listados em cfg.undoc para revisão."""
     smc = set(smc_operands)
     hooks = set(hooks)       # endereços cuja rotina é SUBSTITUÍDA por hook HLE: fronteira de bloco, não decodificar/seguir
     end = org + len(image)
@@ -85,7 +92,7 @@ def build_cfg(image: bytes, org: int, entries: Iterable[int], smc_operands: Iter
                 break
             if a in owner:                       # cai NO MEIO de instrução já decodificada
                 raise OverlapError(a, owner[a])
-            insn = decode_one(image, a - org, a)
+            insn = decode_one(image, a - org, a, table) if table is not None else decode_one(image, a - org, a)
             if a in smc:
                 raise SmcError("opcode em $%04X é modificado em execução: SMC de opcode não suportado" % a)
             if any(b in smc for b in range(a + 1, a + insn.length)):
@@ -129,6 +136,8 @@ def build_cfg(image: bytes, org: int, entries: Iterable[int], smc_operands: Iter
             break  # jump_ind, ret, e todos os acima terminam a varredura linear
 
     cfg = Cfg(org, len(image), entries)
+    cfg.model = table.model if table is not None else "lynx1"
+    cfg.undoc = sorted(a for a, i in insn_at.items() if i.undoc)
     for start in sorted(leaders):
         if start in hooks:                       # sem bloco: lx_dispatch consulta o hook ANTES da tabela
             continue

@@ -52,6 +52,21 @@ _BRANCH_COND = {
 }
 
 
+def _cond_branch(op, ctx: _Ctx):
+    """Desvio condicional: (linhas_prévias, condição C). Cobre Bcc (flags) e BBRn/BBSn (bit n de uma posição da
+    página zero, Lynx II): estes leem a memória UMA vez em 'm' antes do teste."""
+    sem = op.sem
+    if sem in _BRANCH_COND:
+        return [], _BRANCH_COND[sem]
+    if sem[:3] in ("bbr", "bbs") and len(sem) == 4:
+        ctx.m = True
+        mask = 1 << int(sem[3])
+        zp = op.insn.operand & 0xFF
+        return (["m = lx_ram[0x%02X];" % zp],
+                ("!(m & 0x%02X)" if sem[:3] == "bbr" else "(m & 0x%02X)") % mask)
+    return None
+
+
 def _taken_extra(insn) -> int:
     """Ciclos extras de um desvio tomado: +1, e +1 se alvo e instrução seguinte estão em páginas diferentes."""
     return 1 + (1 if ((insn.target ^ insn.next_addr) & 0xFF00) else 0)
@@ -297,6 +312,13 @@ def _emit_op(op: IrOp, ctx: _Ctx) -> List[str]:
             L.append("cpu->zsrc = (lx_u8)(cpu->a & m);")
         L.append("t = %s;" % ("m | cpu->a" if op.sem == "tsb" else "m & ~(lx_u32)cpu->a & 0xFF"))
         L += _store_after_read(insn, "(lx_u8)t")
+    elif op.sem[:3] in ("rmb", "smb") and len(op.sem) == 4:        # Lynx II: modifica 1 bit da página zero, sem flags
+        mask = 1 << int(op.sem[3])
+        zp = insn.operand & 0xFF
+        if op.sem[:3] == "rmb":
+            L.append("lx_ram[0x%02X] = (lx_u8)(lx_ram[0x%02X] & 0x%02X);" % (zp, zp, (~mask) & 0xFF))
+        else:
+            L.append("lx_ram[0x%02X] = (lx_u8)(lx_ram[0x%02X] | 0x%02X);" % (zp, zp, mask))
     elif insn.flow != "seq":
         L += _emit_terminator(op, ctx)
     else:
@@ -309,13 +331,15 @@ def _emit_terminator(op: IrOp, ctx: _Ctx) -> List[str]:
     insn = op.insn
     ctx.pc = True
     sem = op.sem
-    if sem in _BRANCH_COND:
-        return ["if (%s) {" % _BRANCH_COND[sem],
-                "    cpu->cycles += %d;" % _taken_extra(insn),
-                "    pc = 0x%04X;" % insn.target,
-                "} else {",
-                "    pc = 0x%04X;" % insn.next_addr,
-                "}"]
+    cb = _cond_branch(op, ctx)
+    if cb is not None:
+        pre, cond = cb
+        return pre + ["if (%s) {" % cond,
+                      "    cpu->cycles += %d;" % _taken_extra(insn),
+                      "    pc = 0x%04X;" % insn.target,
+                      "} else {",
+                      "    pc = 0x%04X;" % insn.next_addr,
+                      "}"]
     if sem == "bra":
         return ["cpu->cycles += %d;" % _taken_extra(insn), "pc = 0x%04X;" % insn.target]
     if sem == "jmp":
@@ -480,9 +504,12 @@ def _p2_terminator(op, ctx, intra, label, nxt_physical, base):
         return ["pc = 0x%04X;" % tgt, "goto L_exit;"]
 
     L = ["cyc += %d;" % base]
-    if sem in _BRANCH_COND:
+    cb = _cond_branch(op, ctx)
+    if cb is not None:
+        pre, cond = cb
+        L += pre                                                           # BBRn/BBSn: leitura de 'm' antes do teste
         ctx_taken = _taken_extra(insn)
-        L.append("if (%s) {" % _REG_RE.sub(r"\1", _BRANCH_COND[sem]))     # condição sobre as variáveis LOCAIS
+        L.append("if (%s) {" % _REG_RE.sub(r"\1", cond))                  # condição sobre as variáveis LOCAIS
         L.append("    cyc += %d;" % ctx_taken)
         L += ["    " + x for x in go(insn.target)]
         L.append("}")

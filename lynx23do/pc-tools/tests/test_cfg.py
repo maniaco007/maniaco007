@@ -3,6 +3,7 @@ import unittest
 
 from lynx2c.cfg import OverlapError, build_cfg
 from lynx2c.decode import UnsupportedOpcode, TruncatedInstruction
+from lynx2c.optable import Optable
 from lynx2c.emit_c import emit_overlay
 from lynx2c.pipeline import analyze
 from independent import independent_leaders
@@ -13,6 +14,9 @@ def H(s):
 
 
 PROG = H("A901 200B02 F002 6902 60 EA 60")   # LDA #1; JSR $020B; BEQ +2; ADC #2; RTS; NOP(dado); RTS
+
+
+CORE = Optable("core")
 
 
 class TestCfg(unittest.TestCase):
@@ -40,7 +44,7 @@ class TestCfg(unittest.TestCase):
         # LDA #1; (hook em $0302: bytes inválidos que o decoder rejeitaria); depois do hook: RTS
         img = H("A901 0F0F0F 60")
         with self.assertRaises(UnsupportedOpcode):
-            build_cfg(img, 0x300, [0x300])
+            build_cfg(img, 0x300, [0x300], table=CORE)               # estrito: $0F (BBR0) não existe no conjunto core
         cfg = build_cfg(img, 0x300, [0x300], hooks=[0x302])
         self.assertEqual(cfg.starts, [0x300])                       # sem bloco para o hook
         self.assertEqual(cfg.blocks[0x300].kind, "fall")
@@ -63,8 +67,10 @@ class TestCfg(unittest.TestCase):
 
     def test_reachable_unsupported_opcode_is_explicit_error(self):
         with self.assertRaises(UnsupportedOpcode) as cm:
-            build_cfg(H("A901 DB"), 0x300, [0x300])
+            build_cfg(H("A901 DB"), 0x300, [0x300], table=CORE)       # $DB (STP do WDC) não é opcode do conjunto core
         self.assertIn("$0302", str(cm.exception))
+        cfg = build_cfg(H("A901 DB 60"), 0x300, [0x300])              # Lynx I (padrão): $DB é NOP de 1 byte
+        self.assertEqual(cfg.undoc, [0x302])
 
     def test_truncated_at_end_of_image(self):
         with self.assertRaises(TruncatedInstruction):

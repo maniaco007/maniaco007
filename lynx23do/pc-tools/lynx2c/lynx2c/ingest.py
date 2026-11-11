@@ -7,6 +7,10 @@ Formatos (confirmados contra o emulador Handy, como DADO de referência):
         rotation: 0 nenhuma, 1 esquerda, 2 direita (outro valor -> nenhuma). audin = bit 0 de 'audin'.
         ATENÇÃO: jogos comerciais NÃO têm código executável conhecido aqui: o 1º bloco é cifrado e só a ROM de boot do
         Lynx (que o usuário fornece ao lynxtrace) o decifra e carrega. O ingest só descreve o cartucho.
+  LNX2  cabeçalho de 64 bytes (formato da comunidade; lido como DADO de referência do Gearlynx): 'LNX2' | bank[4] |
+        u16 version(=1, little-endian) | name[32] | manufacturer[16] | rotation | flags | eeprom | reserved | custom | sd_api.
+        bank[i] (ordem: banco0, banco0-A, banco1, banco1-A): bits 7..6 = tipo (0 não usado, 1 RAM persistente, 2 RAM, 3 ROM);
+        tamanho = (16 << (b & 7)) * (2 << ((b >> 3) & 7)) bytes. flags bit 0 = console Lynx II (liga os opcodes Rockwell).
   BS93  homebrew carregável pela ROM de boot: 10 bytes = 0x80 0x08 (BRA +8: o cabeçalho é executável!) | u16 BIG-endian
         load_address (endereço do 1º byte APÓS o cabeçalho) | u16 BIG-endian size | 'BS93'. O arquivo inteiro vai para
         load_address-10 e o PC inicial é load_address-10 (o BRA pula os 8 bytes restantes do cabeçalho).
@@ -43,6 +47,8 @@ class CartInfo:
     load_addr: Optional[int] = None   # bs93/raw: onde a imagem vai na RAM do Lynx (inclui o cabeçalho BS93)
     entry: Optional[int] = None       # bs93/raw: PC inicial conhecido
     executable_known: bool = False    # True quando o código é conhecido SEM executar a ROM de boot
+    cpu: str = "lynx1"                # modelo de CPU a usar na decodificação: lynx1 (padrão) | lynx2 (LNX2 flags bit 0)
+    lnx2_banks: List[tuple] = field(default_factory=list)   # [(tipo, bytes)] por banco 0,0A,1,1A (só LNX2)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -56,6 +62,8 @@ def ingest(data: bytes, org: Optional[int] = None, entry: Optional[int] = None) 
         return _bs93(data, sha)
     if len(data) >= LNX_HEADER_SIZE and data[0:4] == b"LYNX":
         return _lnx(data, sha)
+    if len(data) >= LNX_HEADER_SIZE and data[0:4] == b"LNX2":
+        return _lnx2(data, sha)
     if org is None:
         raise IngestError("formato desconhecido (nem .lnx nem BS93): informe --org para tratar como imagem plana")
     info = CartInfo("raw", sha, len(data), data=data, load_addr=org, entry=org if entry is None else entry,
@@ -86,6 +94,45 @@ def _lnx(data: bytes, sha: str) -> CartInfo:
     want = info.bank0_bytes + info.bank1_bytes
     if len(info.data) != want:
         info.warnings.append("dados (%d bytes) != bancos declarados (%d bytes)" % (len(info.data), want))
+    return info
+
+
+BANK_TYPES = {0: "não usado", 1: "RAM persistente", 2: "RAM", 3: "ROM"}
+
+
+def lnx2_bank_size(desc: int) -> int:
+    """Tamanho em bytes de um descritor de banco LNX2 (0 se o tipo é 'não usado')."""
+    if desc >> 6 == 0:
+        return 0
+    return (16 << (desc & 7)) * (2 << ((desc >> 3) & 7))
+
+
+def _lnx2(data: bytes, sha: str) -> CartInfo:
+    banks = data[4:8]
+    version = data[8] | (data[9] << 8)
+    info = CartInfo("lnx", sha, len(data), name=_cstr(data[10:42]), manufacturer=_cstr(data[42:58]), version=version)
+    info.rotation = ROTATIONS.get(data[58], "nenhuma")
+    if data[58] not in ROTATIONS:
+        info.warnings.append("rotação %d inválida: tratada como nenhuma" % data[58])
+    flags = data[59]
+    info.eeprom = data[60]
+    info.audin = (banks[1] >> 6) != 0 or (banks[3] >> 6) != 0            # bancos "A" presentes => AUDIN usado
+    if version != 1:
+        info.warnings.append("versão de cabeçalho LNX2 %d (esperado 1)" % version)
+    if flags & 1:
+        info.cpu = "lynx2"
+    if flags & ~1:
+        info.warnings.append("flags LNX2 com bits desconhecidos: 0x%02X" % (flags & ~1))
+    sizes = [lnx2_bank_size(b) for b in banks]
+    info.lnx2_banks = [(b >> 6, s) for b, s in zip(banks, sizes)]
+    info.bank0_bytes, info.bank1_bytes = sizes[0], sizes[2]
+    info.data = data[LNX_HEADER_SIZE:]
+    want = sum(sizes)
+    if len(info.data) != want:
+        info.warnings.append("dados (%d bytes) != bancos declarados (%d bytes)" % (len(info.data), want))
+    for i, b in enumerate(banks):
+        if (b >> 6) in (1, 2):
+            info.warnings.append("banco %d é %s: o cartucho tem RAM/NVRAM própria (não suportado ainda)" % (i, BANK_TYPES[b >> 6]))
     return info
 
 
@@ -122,6 +169,32 @@ def build_lnx(bank0: bytes, bank1: bytes = b"", name: str = "TESTE", manufacture
     hdr += bytes([rotation, audin, eeprom, 0, 0, 0])
     assert len(hdr) == LNX_HEADER_SIZE
     return bytes(hdr) + bank0 + bank1
+
+
+def build_lnx2(banks, name: str = "TESTE", manufacturer: str = "LYNX23DO", rotation: int = 0, flags: int = 0,
+               eeprom: int = 0) -> bytes:
+    """Monta um LNX2 (para testes). banks = até 4 itens [(tipo, bytes)] na ordem banco0, 0A, 1, 1A (tipo 3 = ROM)."""
+    desc, payload = [], b""
+    for tipo, blob in list(banks) + [(0, b"")] * (4 - len(banks)):
+        if tipo == 0:
+            desc.append(0)
+            continue
+        for bsz in range(8):
+            for bcnt in range(8):
+                if (16 << bsz) * (2 << bcnt) == len(blob):
+                    desc.append(tipo << 6 | bcnt << 3 | bsz)
+                    break
+            else:
+                continue
+            break
+        else:
+            raise ValueError("tamanho de banco LNX2 inválido: %d" % len(blob))
+        payload += blob
+    hdr = bytearray(b"LNX2") + bytes(desc) + bytes([1, 0])
+    hdr += name.encode("latin-1")[:32].ljust(32, b"\0") + manufacturer.encode("latin-1")[:16].ljust(16, b"\0")
+    hdr += bytes([rotation, flags, eeprom, 0, 0, 0])
+    assert len(hdr) == LNX_HEADER_SIZE
+    return bytes(hdr) + payload
 
 
 def build_bs93(code: bytes, load_addr: int) -> bytes:

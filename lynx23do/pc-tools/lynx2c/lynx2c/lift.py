@@ -5,7 +5,7 @@ from typing import Iterable, List
 from .ir import IrOp, region_of, REGION_DYNAMIC, REGION_RAM
 from .optable import Optable
 
-_TABLE = Optable()
+_TABLE = Optable("lynx2")     # só defs/uses por 'sem' (idênticos em todos os modelos): lynx2 é o superconjunto de semânticas
 
 
 def lift(insns: Iterable) -> List[IrOp]:
@@ -16,6 +16,8 @@ def lift(insns: Iterable) -> List[IrOp]:
             region = "NONE"                         # alvo de salto/desvio: não é acesso a memória de dados
         elif insn.mode == "abs":
             region = region_of(insn.operand)      # operando absoluto: região estática
+        elif insn.mode in ("nop1", "nop2", "nop3"):
+            region = "NONE"                         # NOP: operando nunca é lido (docs/12 §2)
         elif insn.mode in ("imm", "zp", "zpx", "zpy"):
             region = REGION_RAM                     # imediato / zero page: sempre RAM
         else:

@@ -37,11 +37,30 @@ Leitura **somente-leitura** (clones rasos em `/home/user/<dono>/<repo>`, nada ex
   Gearlynx (o Handy os implementa como "dormir", **discordando** dos dois emuladores mais precisos; seguimos os dois).
 * **Lynx II** (revisão posterior; sinalizada no cabeçalho `LNX2`, bit 0 de `flags`): acrescenta os 32 opcodes Rockwell,
   **5 ciclos** (`RMB/SMB zp`: 2 B; `BBR/BBS zp,rel`: 3 B, mais o custo de desvio tomado). Os mesmos NOPs multi-byte continuam.
-* **Consequência para o `lynx2c`** (tarefa nova, barata, **ainda não feita**): (a) decodificar os 14 NOPs multi-byte como NOP com
-  tamanho/ciclos da tabela — sem isso, um jogo que os use faz o CFG **falhar com erro explícito** (comportamento atual, seguro);
-  (b) `RMB/SMB/BBR/BBS` só se o `.lnx`/LNX2 declarar Lynx II (flag `--lynx2`), senão tratar como NOP de 1 byte (é o que o
-  hardware Lynx I faz — um código que depende disso seria bug do jogo, mas **é** o comportamento real).
-* A ferramenta de cruzamento imprime a lista exata de opcodes que o hardware executa e nós não decodificamos.
+* **FEITO em v0.8.0** (ver §2.1): o `lynx2c` decodifica os NOPs (1/2/3 bytes, inclui `CB`/`DB`) e, no Lynx II, os Rockwell.
+
+### 2.1 Como ficou no `lynx2c` v0.8.0
+* **Modelo de CPU** (`--cpu core|lynx1|lynx2`; `analyze(..., cpu=)`): `core` = só os 178 documentados (estrito, qualquer outro é
+  erro explícito — o comportamento anterior); **`lynx1` = padrão** = core + NOPs indocumentados (256 opcodes, nenhum indefinido);
+  `lynx2` = core + NOPs (`x3`/`xB`/multi-byte) + `RMBn/SMBn/BBRn/BBSn` nos `x7`/`xF` (256 opcodes). Um `.lnx` **LNX2** com
+  `flags` bit 0 liga `lynx2` sozinho (`ingest` lê o cabeçalho; `--cpu` explícito vence).
+* **Tabela** (`optable.json`, gerada por `gen_optable.py`): `ops` = os 178; `ext` = 110 extensões com `models` e `undoc`.
+* **Aviso, não bloqueio**: NOP indocumentado decodificado vai para `cfg.undoc` e para o relatório/stderr ("confira se não é dado").
+  Motivo: o hardware os executa, mas uma região de dados alcançada por engano antes dava erro explícito e agora vira NOPs —
+  o aviso devolve a visibilidade; `--cpu core` restaura o erro.
+* **Semântica**: NOP não lê nem escreve memória (operando só consumido; o Felix lê alguns operandos, efeito só em E/S — decisão
+  registrada); `RMBn/SMBn zp` = leitura-modificação-escrita sem flags, 5 ciclos; `BBRn/BBSn zp,rel` = 3 bytes, 5 ciclos, +1 tomado,
+  +1 se cruzar página (alvo relativo ao **fim** da instrução), nenhum flag.
+* **Verificação**: oráculo independente estendido (`core65c02.ref_table`, derivado por regra do nibble baixo e de `opcode>>4`);
+  31 testes novos (`test_cpu_models.py`; total 149 unitários); corpus diferencial acrescido de 4 dirigidos + 80 programas aleatórios (Lynx I e II) e de
+  NOPs/RMB/SMB em singles e blocos; **0 falhas** em 909 852 vetores de blocos + 13 920 de programas (-O0/-O2, fases 1 e 2); Dormann
+  6502 e 65C02 continuam passando. **Teste de mutação**: 6 mutantes (RMB com `|`, BBR invertido, alvo +2, sem +1 de página, `5C` com
+  7 ciclos, `CB` com 2 ciclos) — **6 mortos**.
+* **Honestidade sobre a independência**: a tabela de NOPs/Rockwell foi *construída a partir* dos fatos do Gearlynx/Felix; por isso o
+  `crosscheck_gearlynx.py` (agora 256/256 por modelo, 0 divergências) confere a **transcrição**, não é uma 2ª fonte semântica. A 2ª
+  fonte real para os ciclos dos 14 NOPs multi-byte e dos 16 `BBRn/BBSn` é o **Handy** (coincide, exceto o slot `$BF`, anomalia do Handy
+  fixada no teste). Para `RMB/SMB` e NOPs de 1 byte o Handy os trata como ILLEGAL: sem 2ª fonte numérica além do Gearlynx.
+* **Limites**: não há jogo Lynx II real testado (nenhum exige Rockwell); `lynxtrace` (oráculo) segue sem perfil dinâmico.
 
 ## 3. Modelo de tempo: ticks de 16 MHz
 
@@ -193,7 +212,7 @@ AOT (D2). Para consoles *muito* mais leves (Game Boy, SG-1000) um núcleo interp
 
 Não implementado nesta entrega (só leitura + documentação + 1 ferramenta de cruzamento). Ordem sugerida:
 
-1. **Pequenos, no tradutor**: NOPs multi-byte do Lynx I; `RMB/SMB/BBR/BBS` sob `--lynx2`; cabeçalho `LNX2`; `CB`/`DB` como NOP 1 B/1 c (o Handy os trata como sono; ver §2).
+1. ~~**Pequenos, no tradutor**~~ — **FEITO (v0.8.0, §2.1)**: NOPs, `CB`/`DB`, Rockwell sob `--cpu lynx2`, cabeçalho `LNX2`.
 2. **M2**: ticks em vez de ciclos (§3.3), `lx_mikey` com cadeia de 8 timers + IRQ por nível, agendador por próximo evento, vblank real,
    `CPUSLEEP`; lógica×apresentação desacopladas (§4.1); `lx_mem` com tabela de páginas e `MAPCTL`.
 3. **`ingest` commercial**: HLE do boot (3 armadilhas), decifração do 1º bloco, objeto cartucho serial (RCART/strobe/AUDIN/bancos),

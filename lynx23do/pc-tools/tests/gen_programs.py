@@ -21,12 +21,13 @@ import random
 import struct
 import sys
 
+from lynx2c.asm import assemble as _asm_ext
 from lynx2c.emit_c import _HEADER, emit_overlay
 from lynx2c.pipeline import analyze
 from lynx2c.routines import DEFAULT_MAX_BLOCKS, roots_of
 from lynx2c import ABI_VERSION, __version__
 from independent import independent_leaders
-from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS, FLOW_MNEMONICS, BR_COND, _LEN
+from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS, FLOW_MNEMONICS, BR_COND, _LEN, ref_table
 
 OPC = {v: k for k, v in REF_OPS.items()}                      # (mn, mode) -> opcode
 SEQ = sorted(v for v in REF_OPS.values() if v[0] not in FLOW_MNEMONICS)
@@ -72,7 +73,31 @@ def assemble(org, items):
 
 
 # ---------------------------------------------------------------- programas aleatórios
-def random_program(rng):
+def _ext_kinds(rng, kinds, cpu):
+    """Programas de modelo lynx1/lynx2: troca ~25% das instruções sequenciais por NOPs indocumentados (1/2/3 bytes,
+    inclui $CB/$DB) e, no Lynx II, por RMBn/SMBn; ~12% dos desvios viram BBRn/BBSn. Só roda para cpu != None."""
+    ops = ref_table(cpu)
+    nops = sorted(o for o, (mn, mode) in ops.items() if mn == "NOP" and mode.startswith("nop"))
+    rw = sorted(o for o, (mn, mode) in ops.items() if mn[:3] in ("RMB", "SMB"))
+    bb = sorted(o for o, (mn, mode) in ops.items() if mn[:3] in ("BBR", "BBS") and len(mn) == 4)
+    out = []
+    for k, v in kinds:
+        r = rng.random()
+        if k == "seq" and r < 0.25:
+            if rw and r < 0.10:
+                out.append(("rw", rng.choice(rw)))
+            else:
+                out.append(("nop", rng.choice(nops)))
+        elif k == "br" and bb and r < 0.12 * 3:
+            out.append(("bb", rng.choice(bb)))
+        elif k == "br" and not bb and r < 0.05:
+            out.append(("nop", rng.choice(nops)))
+        else:
+            out.append((k, v))
+    return out
+
+
+def random_program(rng, cpu=None):
     org = rng.choice([rng.randrange(0x0200, 0xE000), 0x12E0 + rng.randrange(0x20), 0x00F0 + rng.randrange(0x10),
                       0xFBF0 + rng.randrange(8)])
     n = rng.randrange(8, 48)
@@ -103,7 +128,11 @@ def random_program(rng):
             kinds.append(("jiax" if iax_prog else "jind", None))
     if iax_prog and not any(k == "jiax" for k, _ in kinds):
         kinds[rng.randrange(len(kinds))] = ("jiax", None)
-    lens = [_LEN[v[1]] if k == "seq" else {"br": 2, "bra": 2, "jmp": 3, "jsr": 3, "rts": 1, "rti": 1, "brk": 2, "jind": 3, "jiax": 3}[k]
+    if cpu is not None:
+        kinds = _ext_kinds(rng, kinds, cpu)
+    table = ref_table(cpu or "core")
+    lens = [_LEN[v[1]] if k == "seq" else _LEN[table[v][1]] if k in ("nop", "rw", "bb")
+            else {"br": 2, "bra": 2, "jmp": 3, "jsr": 3, "rts": 1, "rti": 1, "brk": 2, "jind": 3, "jiax": 3}[k]
             for k, v in kinds]
     starts, a = [], org
     for L in lens:
@@ -142,6 +171,15 @@ def random_program(rng):
                 if smc_addrs and mode == "abs" and mn in WRITERS and rng.random() < 0.6:
                     x = rng.choice(smc_addrs)                 # esta escrita modifica um operando imediato
                 code += bytes([OPC[v], x & 0xFF, x >> 8])
+        elif k == "nop":                                   # NOP indocumentado: operandos arbitrários (nunca lidos)
+            code += bytes([v] + [rng.choice([0x00, 0xFC, 0xFD, 0xFF, rng.randrange(256)]) for _ in range(lens[i] - 1)])
+        elif k == "rw":                                    # RMBn/SMBn zp
+            code += bytes([v, rng.choice([0x00, 0x01, 0x10, 0xFE, 0xFF, rng.randrange(256)])])
+        elif k == "bb":                                    # BBRn/BBSn zp,rel (3 bytes; alvo relativo ao FIM)
+            nxt = a + 3
+            cands = [s for s in starts if -128 <= s - nxt <= 127]
+            tgt = rng.choice(cands) if cands else nxt
+            code += bytes([v, rng.choice([0x00, 0x01, 0x10, 0xFE, 0xFF, rng.randrange(256)]), (tgt - nxt) & 0xFF])
         elif k in ("br", "bra"):
             nxt = a + 2
             cands = [s for s in starts if -128 <= s - nxt <= 127]
@@ -182,7 +220,7 @@ def random_program(rng):
     for a in smc_addrs:                                   # valor inicial do operando = byte da imagem
         preset[a] = code[a - org]
     return dict(org=org, code=bytes(code), seeds=seeds, preset=preset, x_choices=[0, 2, 4, 6] if has_iax else None,
-                s_choices=None, smc=set(smc_addrs))
+                s_choices=None, smc=set(smc_addrs), cpu=cpu or "lynx1")
 
 
 # ---------------------------------------------------------------- programas dirigidos
@@ -273,6 +311,39 @@ def directed_programs():
     return P
 
 
+def directed_ext_programs():
+    """Lynx II: laços e desvios por bit (BBR/BBS), RMB/SMB, desvio em limite de página, e NOPs no meio do fluxo."""
+    A = _asm_ext
+    P = []
+    # 1. conta bits: gira o bit 0..7 de $10 com BBS e acumula; RMB/SMB alteram o contador
+    code, L = A(0x0300, [("LDA", "imm", 0), ("STA", "zp", 0x10), ("STA", "zp", 0x11),
+                         ("L", "top"), ("BBS0", "zprel", 0x10, "b1"), ("INC", "zp", 0x11),
+                         ("L", "b1"), ("BBR1", "zprel", 0x10, "b2"), ("INC", "zp", 0x11), ("INC", "zp", 0x11),
+                         ("L", "b2"), ("SMB7", "zp", 0x12), ("RMB0", "zp", 0x12), ("INC", "zp", 0x10),
+                         ("BBR7", "zprel", 0x12, "top"), ("BBS7", "zprel", 0x12, "fim"), ("L", "fim"), ("RTS", "imp")])
+    P.append(dict(name="rockwell_bits", org=0x0300, code=code, seeds=set(), preset={}, x_choices=None, s_choices=None,
+                  budget=[40, 200, 1200], cpu="lynx2"))
+    # 2. BBR/BBS cruzando página (alvo e próxima instrução em páginas diferentes), com acesso a zp de E/S "espelhada"
+    code, L = A(0x12F2, [("L", "a"), ("BBS3", "zprel", 0x20, "b"), ("ADC", "imm", 1), ("BBR2", "zprel", 0x21, "a"),
+                         ("L", "b"), ("SMB3", "zp", 0x21), ("BBS4", "zprel", 0x22, "a"), ("BBR4", "zprel", 0x22, "a"),
+                         ("RTS", "imp")])
+    P.append(dict(name="rockwell_pagina", org=0x12F2, code=code, seeds=set(), preset={}, x_choices=None, s_choices=None,
+                  budget=[30, 150, 800], cpu="lynx2"))
+    # 3. NOPs indocumentados no fluxo (Lynx I): $CB/$DB, 2 bytes, 3 bytes ($5C: 8 ciclos) e $x7 como NOP de 1 byte
+    code, L = A(0x0400, [("LDA", "imm", 1), ("DB", [0xCB]), ("DB", [0x5C, 0x00, 0xFC]), ("DB", [0x44, 0x91]),
+                         ("DB", [0x07]), ("DB", [0xDB]), ("ADC", "imm", 2), ("DB", [0xD4, 0x10]), ("DB", [0xFC, 0x00, 0xFD]),
+                         ("STA", "zp", 0x30), ("DB", [0x0F]), ("BNE", "rel", "fim"), ("DB", [0x82, 0xFF]),
+                         ("L", "fim"), ("RTS", "imp")])
+    P.append(dict(name="nops_lynx1", org=0x0400, code=code, seeds=set(), preset={}, x_choices=None, s_choices=None,
+                  budget=[20, 100, 400], cpu="lynx1"))
+    # 4. a MESMA sequência com cpu=lynx2: $07 vira RMB0, $0F vira BBR0 (muda tamanhos e fluxo)
+    code, L = A(0x0500, [("LDA", "imm", 1), ("DB", [0xCB]), ("DB", [0x07, 0x10]), ("DB", [0x0F, 0x10, 0x02]),
+                         ("ADC", "imm", 2), ("STA", "zp", 0x31), ("RTS", "imp")])
+    P.append(dict(name="x7_xf_lynx2", org=0x0500, code=code, seeds=set(), preset={}, x_choices=None, s_choices=None,
+                  budget=[20, 100, 400], cpu="lynx2"))
+    return P
+
+
 # ---------------------------------------------------------------- corpus
 class Corpus:
     def __init__(self, outdir, seed=0x464C4F57):
@@ -281,9 +352,10 @@ class Corpus:
 
     def add_program(self, prog, nvec):
         entries = [prog["org"]] + sorted(prog["seeds"])
-        cfg, ops = analyze(prog["code"], prog["org"], entries, prog.get("precise", False), prog.get("smc", ()))
+        cpu = prog.setdefault("cpu", "lynx1")
+        cfg, ops = analyze(prog["code"], prog["org"], entries, prog.get("precise", False), prog.get("smc", ()), cpu=cpu)
         # a referência para onde o TRADUTOR para: garantir que os líderes dele são os corretos
-        want = independent_leaders(prog["code"], prog["org"], entries)
+        want = independent_leaders(prog["code"], prog["org"], entries, cpu)
         assert set(cfg.blocks) == want, "líderes do CFG divergem do algoritmo independente: %s" % sorted(
             set(cfg.blocks) ^ want)
         pid = len(self.progs)
@@ -300,7 +372,7 @@ class Corpus:
         rng = self.rng
         mem = RefMem(rng, value_fn=lambda r: rv(r) if r.random() < 0.5 else r.randrange(256), preset=prog["preset"])
         mem.setup = sorted(prog["preset"].items())
-        cpu = RefCpu(mem)
+        cpu = RefCpu(mem, model=prog.get("cpu", "lynx1"))
         cpu.a, cpu.y = rv(rng), rv(rng)
         cpu.x = rng.choice(prog["x_choices"]) if prog["x_choices"] else rv(rng)
         cpu.s = rng.choice(prog["s_choices"]) if prog["s_choices"] else rng.randrange(256)
@@ -343,8 +415,8 @@ class Corpus:
         for pid, (prog, cfg, ops) in enumerate(self.progs):
             parts.append(emit_overlay(pid, cfg, ops, phase=prog.get("phase", 2),
                                         max_blocks=prog.get("max_blocks", DEFAULT_MAX_BLOCKS)))
-            lines.append("prog %04d org=$%04X blocos=%d raizes=%d fase=%d maxb=%s %s%s :: %s" % (
-                pid, prog["org"], len(cfg.blocks), len(prog["roots"]), prog.get("phase", 2), prog.get("max_blocks", DEFAULT_MAX_BLOCKS), prog.get("name", "aleatorio"),
+            lines.append("prog %04d org=$%04X cpu=%s blocos=%d raizes=%d fase=%d maxb=%s %s%s :: %s" % (
+                pid, prog["org"], prog.get("cpu", "lynx1"), len(cfg.blocks), len(prog["roots"]), prog.get("phase", 2), prog.get("max_blocks", DEFAULT_MAX_BLOCKS), prog.get("name", "aleatorio"),
                 " [precise]" if prog.get("precise") else "", prog["code"].hex()))
         parts.append("const LxOverlay *const lx_test_ovs[] = {\n%s\n};\nconst unsigned lx_test_novs = %d;\n" % (
             ",\n".join("    &lx_ov%d" % i for i in range(len(self.progs))), len(self.progs)))
@@ -357,7 +429,7 @@ class Corpus:
             f.write(self.vecs)
 
 
-def build(outdir, n_random=220, nvec_random=40, nvec_directed=120):
+def build(outdir, n_random=220, nvec_random=40, nvec_directed=120, n_ext=80):
     c = Corpus(outdir)
     for k, prog in enumerate(directed_programs()):
         prog["phase"] = 1 if k % 4 == 3 else 2
@@ -371,6 +443,21 @@ def build(outdir, n_random=220, nvec_random=40, nvec_directed=120):
         prog["precise"] = (made % 3 == 0)      # 1/3 dos programas no modo P exato
         prog["phase"] = 1 if made % 4 == 0 else 2   # 1/4 na fase 1 (um bloco por função), 3/4 na fase 2 (rotinas fundidas)
         prog["max_blocks"] = c.rng.choice([0, 0, 2, 3, 5, 8, DEFAULT_MAX_BLOCKS])   # exercita fronteiras, saídas e sub-entradas
+        c.add_program(prog, nvec_random)
+        made += 1
+    # extensões de modelo (docs/12 §2): dirigidos + aleatórios Lynx I e Lynx II (corpus ADICIONAL, após o original)
+    for k, prog in enumerate(directed_ext_programs()):
+        prog["phase"] = 1 if k % 4 == 3 else 2
+        prog["max_blocks"] = [0, 2, 4, DEFAULT_MAX_BLOCKS][k % 4]
+        c.add_program(prog, nvec_directed)
+    made = 0
+    while made < n_ext:
+        prog = random_program(c.rng, cpu="lynx1" if made % 2 == 0 else "lynx2")
+        if prog is None:
+            continue
+        prog["precise"] = (made % 3 == 0)
+        prog["phase"] = 1 if made % 4 == 0 else 2
+        prog["max_blocks"] = c.rng.choice([0, 0, 2, 3, 5, 8, DEFAULT_MAX_BLOCKS])
         c.add_program(prog, nvec_random)
         made += 1
     c.write()

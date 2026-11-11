@@ -69,6 +69,41 @@ def cycles_and_pc(mn, mode):
     return RD[mode], mode in PC_READ_MODES
 
 
+# ---- EXTENSÕES por modelo de console (docs/12 §2; fontes: Gearlynx e Felix, conferidas por crosscheck_gearlynx.py) ----
+# O conjunto "core" acima (178 opcodes) é o que o 65C02 documenta e o Dormann exercita. O hardware executa MAIS:
+#   * 1 byte / 1 ciclo ("NOP indocumentado"): todo $x3 e $xB (32 códigos, inclui $CB e $DB = WAI/STP do WDC, que o Lynx NÃO tem);
+#     no Lynx I também $x7 e $xF (32 códigos). No Lynx II $x7/$xF são Rockwell (RMB/SMB/BBR/BBS), 5 ciclos.
+#   * NOPs de 2/3 bytes (ambos os modelos): lista explícita abaixo (bytes, ciclos).
+# Operandos dos NOPs de vários bytes NÃO são lidos da memória (Gearlynx); o Felix lê alguns (efeito só em E/S) — decisão em docs/12.
+NOP_MULTI = {0x02: (2, 2), 0x22: (2, 2), 0x42: (2, 2), 0x62: (2, 2), 0x82: (2, 2), 0xC2: (2, 2), 0xE2: (2, 2),
+             0x44: (2, 3), 0x54: (2, 4), 0xD4: (2, 4), 0xF4: (2, 4),
+             0x5C: (3, 8), 0xDC: (3, 4), 0xFC: (3, 4)}                         # opcode -> (bytes, ciclos)
+MODELS = ("lynx1", "lynx2")
+
+
+def build_ext():
+    ext = []
+
+    def add(opc, mn, mode, cycles, sem, flow, models, undoc):
+        ext.append({"opcode": "0x%02X" % opc, "mnemonic": mn, "mode": mode, "cycles": cycles, "page_cross": False,
+                    "sem": sem, "flow": flow, "models": list(models), "undoc": undoc})
+
+    for hi in range(16):
+        for lo in (0x3, 0xB):
+            add(hi << 4 | lo, "NOP", "nop1", 1, "nop", "seq", MODELS, True)
+        for lo in (0x7, 0xF):
+            add(hi << 4 | lo, "NOP", "nop1", 1, "nop", "seq", ("lynx1",), True)
+    for opc, (n, c) in NOP_MULTI.items():
+        add(opc, "NOP", "nop%d" % n, c, "nop", "seq", MODELS, True)
+    for bit in range(8):
+        add(0x07 | bit << 4, "RMB%d" % bit, "zp", 5, "rmb%d" % bit, "seq", ("lynx2",), False)
+        add(0x87 | bit << 4, "SMB%d" % bit, "zp", 5, "smb%d" % bit, "seq", ("lynx2",), False)
+        add(0x0F | bit << 4, "BBR%d" % bit, "zprel", 5, "bbr%d" % bit, "branch", ("lynx2",), False)
+        add(0x8F | bit << 4, "BBS%d" % bit, "zprel", 5, "bbs%d" % bit, "branch", ("lynx2",), False)
+    ext.sort(key=lambda e: (int(e["opcode"], 16), e["models"]))
+    return ext
+
+
 # ---- semântica de flags: defs / uses --------------------------------------------------------------
 NZ = [N, Z]
 SEM = {  # sem -> (defs, uses)
@@ -93,9 +128,12 @@ SEM = {  # sem -> (defs, uses)
 }
 for mn, (op, f) in BRANCHES.items():
     SEM[mn.lower()] = ([], [f])
+for _b in range(8):                                # Rockwell (Lynx II): nenhum flag
+    for _n in ("rmb", "smb", "bbr", "bbs"):
+        SEM["%s%d" % (_n, _b)] = ([], [])
 
 MODES = dict(imm=2, zp=2, zpx=2, zpy=2, abs=3, absx=3, absy=3, izx=2, izy=2, izp=2,
-             rel=2, ind=3, iax=3, imp=1, acc=1, brk=2)
+             rel=2, ind=3, iax=3, imp=1, acc=1, brk=2, nop1=1, nop2=2, nop3=3, zprel=3)
 
 
 def build():
@@ -134,20 +172,27 @@ def build():
 
 def main():
     ops = build()
+    ext = build_ext()
     here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lynx2c", "optable.json")
     nota = ("Ciclos: 65C02 padrao; ADC/SBC +1 em modo decimal (dinamico); +1 em cruzamento de pagina nas leituras "
             "abs,X / abs,Y / (zp),Y e nos shifts abs,X (INC/DEC abs,X fixo em 7); desvios: 2 +1 tomado +1 se cruzar "
             "pagina (estatico). JMP (abs) = 6 ciclos SEM o bug de wrap de pagina do NMOS. BRK=7 (2 bytes: o "
-            "segundo e assinatura), RTI=6. [VERIFY] todos os ciclos contra a doc do CPU do Lynx.")
+            "segundo e assinatura), RTI=6. Ciclos-base e tamanhos conferidos contra Handy e Gearlynx (docs/09, docs/12). "
+            "'ops' = conjunto core (178); 'ext' = extensoes por modelo (lynx1/lynx2), ver docs/12 sec.2.")
     with open(here, "w", encoding="utf-8") as f:
-        f.write('{\n "version": 3,\n "cpu": %s,\n "nota": %s,\n "modes": %s,\n "sems": %s,\n "ops": [\n' % (
-            json.dumps("65C02 (conjunto de uso comum; sem BBR/BBS/RMB/SMB/WAI/STP)", ensure_ascii=False),
+        f.write('{\n "version": 4,\n "cpu": %s,\n "nota": %s,\n "modes": %s,\n "sems": %s,\n "ops": [\n' % (
+            json.dumps("65C02 (core de 178 opcodes + extensoes de Lynx I/II em 'ext'; sem WAI/STP: $CB/$DB sao NOP)", ensure_ascii=False),
             json.dumps(nota, ensure_ascii=False),
             json.dumps({k: {"bytes": v} for k, v in MODES.items()}),
             json.dumps({k: {"defs": d, "uses": u} for k, (d, u) in SEM.items()})))
         f.write(",\n".join("  " + json.dumps(e) for e in ops))
+        f.write("\n ],\n \"ext\": [\n")
+        f.write(",\n".join("  " + json.dumps(e) for e in ext))
         f.write("\n ]\n}\n")
-    print(len(ops), "opcodes ->", os.path.normpath(here))
+    for m in MODELS:
+        n = len({int(e["opcode"], 16) for e in ext if m in e["models"]}) + len(ops)
+        assert n == 256, (m, n)          # com as extensões, cada modelo cobre TODOS os 256 opcodes
+    print(len(ops), "opcodes core +", len(ext), "extensoes ->", os.path.normpath(here))
 
 
 if __name__ == "__main__":

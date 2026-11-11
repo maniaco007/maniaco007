@@ -27,7 +27,7 @@ from lynx2c import ABI_VERSION, __version__
 from lynx2c.pipeline import analyze
 from lynx2c.lift import lift
 from lynx2c.opt import flag_liveness
-from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS as _ALL_OPS, FLOW_MNEMONICS
+from lynxtrace.core65c02 import RefCpu, RefMem, REF_OPS as _ALL_OPS, FLOW_MNEMONICS, is_bit_branch, ref_table
 
 # corpus de BLOCOS RETOS: só opcodes sequenciais (o fluxo de controle é testado em gen_programs.py)
 REF_OPS = {k: v for k, v in _ALL_OPS.items() if v[0] not in FLOW_MNEMONICS}
@@ -58,6 +58,9 @@ def rand_abs(rng, indexed):
 
 
 def encode(opcode, mode, rng):
+    if mode in ("nop1", "nop2", "nop3"):               # NOPs indocumentados: operando arbitrário, nunca lido
+        n = {"nop1": 0, "nop2": 1, "nop3": 2}[mode]
+        return bytes([opcode] + [rng.choice([0x00, 0xFC, 0xFD, 0xFF, rng.randrange(256)]) for _ in range(n)])
     if mode == "imm":
         return bytes([opcode, rv(rng)])
     if mode in ("imp", "acc"):
@@ -76,15 +79,15 @@ class Corpus:
         self.vecs = bytearray()
         self.nvec = 0
 
-    def add_fn(self, code, org=0x0200):
-        self.fns.append((org, bytes(code)))
+    def add_fn(self, code, org=0x0200, model="lynx1"):
+        self.fns.append((org, bytes(code), model))
         return len(self.fns) - 1
 
     def add_vec(self, fn, regs=None, p=None, rng=None):
         rng = rng or self.rng
-        org, code = self.fns[fn]
+        org, code, model = self.fns[fn]
         mem = RefMem(rng, value_fn=lambda r: rv(r) if r.random() < 0.5 else r.randrange(256))
-        cpu = RefCpu(mem)
+        cpu = RefCpu(mem, model=model)
         regs = regs or {}
         cpu.a = regs.get("a", rv(rng)); cpu.x = regs.get("x", rv(rng))
         cpu.y = regs.get("y", rv(rng)); cpu.s = regs.get("s", rng.randrange(256))
@@ -120,12 +123,12 @@ class Corpus:
         os.makedirs(self.out, exist_ok=True)
         phase = int(os.environ.get("LX_PHASE", "2"))
         parts, names, lines = [_HEADER % {"ver": __version__, "abi": ABI_VERSION}], [], []
-        for i, (org, code) in enumerate(self.fns):
-            cfg, ops = analyze(code, org, [org])            # código reto: 1 bloco => 1 rotina
+        for i, (org, code, model) in enumerate(self.fns):
+            cfg, ops = analyze(code, org, [org], cpu=model)  # código reto: 1 bloco => 1 rotina
             text, where = emit_functions(i, cfg, ops, phase)
             parts.append(text)
             names.append(where[org][0])
-            lines.append("%05d $%04X %s ; %s" % (i, org, code.hex(), " | ".join(x.text() for b in cfg.blocks.values() for x in b.insns)))
+            lines.append("%05d $%04X %s %s ; %s" % (i, org, model, code.hex(), " | ".join(x.text() for b in cfg.blocks.values() for x in b.insns)))
         src = "\n".join(parts)
         src += "\nconst LxTestFn lx_test_fns[] = {\n"
         src += "".join("    %s,\n" % n for n in names)
@@ -165,6 +168,27 @@ def build(outdir, n_variants=10, n_vec=60, n_blocks=200, n_block_vec=60, exhaust
         fn = c.add_fn(code, org=rng.randrange(0x10000 - len(code)))
         for _ in range(n_block_vec):
             c.add_vec(fn)
+    # 4. extensões de modelo (docs/12 §2): NOPs indocumentados (todos os 1/2/3 bytes, inclui $CB/$DB) em Lynx I e II,
+    #    RMBn/SMBn em Lynx II; singles + blocos que MISTURAM extensões com instruções normais. BBR/BBS: ver gen_programs.
+    for model in ("lynx1", "lynx2"):
+        full = ref_table(model)
+        ext = sorted(o for o, v in full.items() if o not in _ALL_OPS and not is_bit_branch(v[0]))
+        for opc in ext:
+            mn, mode = full[opc]
+            for _ in range(max(2, n_variants // 3)):
+                fn = c.add_fn(encode(opc, mode, rng), org=rng.randrange(0x10000 - 3), model=model)
+                for _ in range(max(8, n_vec // 4)):
+                    c.add_vec(fn)
+        pool = sorted(REF_OPS) + ext * 3                  # extensões com peso maior
+        for _ in range(max(40, n_blocks // 3)):
+            code = b""
+            for _ in range(rng.randrange(2, 9)):
+                opc = rng.choice(pool)
+                mn, mode = full[opc]
+                code += encode(opc, mode, rng)
+            fn = c.add_fn(code, org=rng.randrange(0x10000 - len(code)), model=model)
+            for _ in range(n_block_vec):
+                c.add_vec(fn)
     c.write()
     return c
 

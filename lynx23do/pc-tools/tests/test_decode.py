@@ -53,7 +53,7 @@ class TestDecode(unittest.TestCase):
 
     def test_unsupported_is_explicit(self):
         with self.assertRaises(UnsupportedOpcode) as cm:
-            decode_block(bytes([0xDB]), 0x0300)    # STP (WDC): fora do conjunto do Lynx
+            decode_block(bytes([0xDB]), 0x0300, Optable("core"))    # STP (WDC): fora do conjunto core (estrito)
         self.assertIn("$DB", str(cm.exception))
         self.assertIn("$0300", str(cm.exception))
 
@@ -64,10 +64,10 @@ class TestDecode(unittest.TestCase):
         insns = decode_block(bytes([0x00, 0xFF, 0x60]), 0x100)
         self.assertEqual([(i.text(), i.length) for i in insns], [("BRK", 2), ("RTS", 1)])
 
-    def test_wdc_extras_not_in_lynx_set_are_rejected(self):
-        for opc in (0xCB, 0xDB, 0x0F, 0x07, 0x87):     # WAI, STP, BBR0, RMB0, SMB0
+    def test_core_table_rejects_everything_outside_the_178(self):
+        for opc in (0xCB, 0xDB, 0x0F, 0x07, 0x87, 0x03, 0x02, 0x5C):   # WAI, STP, BBR0, RMB0, SMB0, NOPs
             with self.assertRaises(UnsupportedOpcode):
-                decode_block(bytes([opc, 0, 0]), 0)
+                decode_block(bytes([opc, 0, 0]), 0, Optable("core"))
 
     def test_truncated(self):
         with self.assertRaises(TruncatedInstruction):

@@ -6,6 +6,8 @@ Framework para portar jogos selecionados de Atari Lynx para rodar **nativamente*
 - **Recompilação estática (AOT)** do 65C02 → C89 (sem interpretador em tempo de execução);
 - **HLE do Suzy**: SCBs de sprite viram Cels e são desenhados por `DrawCels()`.
 
+**v0.8.0 (tradutor):** modelos de CPU `--cpu core|lynx1|lynx2` — NOPs indocumentados (`CB`/`DB` incluídos), Rockwell `RMB/SMB/BBR/BBS` no Lynx II, cabeçalho `LNX2` (docs/12 §2.1).
+
 **v0.7.1 (documentação):** survey de 4 emuladores de Lynx em `docs/12` (tabela de ciclos dos 178 opcodes confere 100 % com o Gearlynx; correções de R11; plano M2/M3).
 
 **Estágio atual: v0.7.0 — tradutor de 178 opcodes com fase 2 (17,9×, 7,1 ARM/instr), validado por Dormann; **backend 3DO escrito e
@@ -56,7 +58,7 @@ Fora deste diretório (raiz do repositório):
 lynx23do/scripts/check_headers.sh          # headers em C89 estrito (gcc), configs host e 3DO
 scripts/check_backups_immutable.sh         # backups/ só recebe adições
 scripts/check_3do_build.sh  [DEVKIT=...]   # estático: ARM big-endian C89 + backend 3DO vs headers reais do SDK
-lynx23do/pc-tools/tests/run_diff.sh        # 118 unitários + diferencial (895 mil vetores de blocos + 10 mil de programas, -O0/-O2)
+lynx23do/pc-tools/tests/run_diff.sh        # 149 unitários + diferencial (910 mil vetores de blocos + 13,9 mil de programas, -O0/-O2)
 lynx23do/pc-tools/tests/functional/run_dormann.sh   # suítes de Klaus Dormann (baixa e confere SHA-256; precisa de rede)
 ```
 O armcc/SDK 3DO **não** está disponível neste ambiente; a compatibilidade com o SDK

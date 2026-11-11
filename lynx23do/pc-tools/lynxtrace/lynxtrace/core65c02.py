@@ -115,7 +115,58 @@ FLOW_MNEMONICS = {"BRA", "JMP", "JSR", "RTS", "BRK", "RTI"} | set(BR_COND)
 REF_OPS = build_ref_table()
 REF_OPS.update(FLOW_OPS)
 _LEN = {"imm": 2, "zp": 2, "zpx": 2, "zpy": 2, "izx": 2, "izy": 2, "izp": 2, "abs": 3, "absx": 3, "absy": 3,
-        "rel": 2, "ind": 3, "iax": 3, "imp": 1, "acc": 1, "brk": 2}
+        "rel": 2, "ind": 3, "iax": 3, "imp": 1, "acc": 1, "brk": 2,
+        "nop1": 1, "nop2": 2, "nop3": 3, "zprel": 3}                       # extensões de Lynx I/II (abaixo)
+
+# ---- extensões por MODELO de console (docs/12 §2), derivadas por REGRA (independente do gen_optable.py) ----------
+# O hardware executa mais que os 178 opcodes do 65C02: NOPs de 1/2/3 bytes e, no Lynx II, os Rockwell.
+#   * $x3 e $xB (inclui $CB/$DB): NOP de 1 byte, 1 ciclo;   * Lynx I: $x7 e $xF também;
+#   * Lynx II: $x7 = RMB/SMB, $xF = BBR/BBS, bit n = (opcode >> 4) & 7, bit 7 do opcode escolhe Set/Branch-if-Set;
+#   * NOPs multi-byte: (bytes, ciclos) abaixo, os mesmos nos dois modelos. O operando NÃO é lido da memória.
+_NOP_MULTI = {0x02: (2, 2), 0x22: (2, 2), 0x42: (2, 2), 0x62: (2, 2), 0x82: (2, 2), 0xC2: (2, 2), 0xE2: (2, 2),
+              0x44: (2, 3), 0x54: (2, 4), 0xD4: (2, 4), 0xF4: (2, 4), 0x5C: (3, 8), 0xDC: (3, 4), 0xFC: (3, 4)}
+MODELS = ("core", "lynx1", "lynx2")
+_tables = {}
+
+
+def ref_table(model="core"):
+    """opcode -> (mnemônico, modo) para o modelo. 'core' = os 178; lynx1/lynx2 = os 256 (sem opcode indefinido)."""
+    if model not in MODELS:
+        raise ValueError(model)
+    if model in _tables:
+        return _tables[model]
+    t = dict(REF_OPS)
+    if model != "core":
+        for opc in range(256):
+            if opc in t:
+                continue
+            lo, bit = opc & 0x0F, (opc >> 4) & 7
+            if lo in (0x3, 0xB) or (model == "lynx1" and lo in (0x7, 0xF)):
+                t[opc] = ("NOP", "nop1")
+            elif model == "lynx2" and lo == 0x7:
+                t[opc] = (("SMB%d" if opc & 0x80 else "RMB%d") % bit, "zp")
+            elif model == "lynx2" and lo == 0xF:
+                t[opc] = (("BBS%d" if opc & 0x80 else "BBR%d") % bit, "zprel")
+            elif opc in _NOP_MULTI:
+                t[opc] = ("NOP", "nop%d" % _NOP_MULTI[opc][0])
+        assert len(t) == 256, (model, len(t))
+    _tables[model] = t
+    return t
+
+
+def is_bit_branch(mn):
+    return mn[:3] in ("BBR", "BBS") and len(mn) == 4
+
+
+def ext_cycles(opcode, mn, mode):
+    """Ciclos-base das extensões (None se não for extensão)."""
+    if mode == "nop1":
+        return 1
+    if mode in ("nop2", "nop3"):
+        return _NOP_MULTI[opcode][1]
+    if mn[:3] in ("RMB", "SMB") or is_bit_branch(mn):
+        return 5
+    return None
 
 _STORES = ("STA", "STX", "STY", "STZ")
 _RMW_MEM = ("INC", "DEC", "ASL", "LSR", "ROL", "ROR", "TSB", "TRB")
@@ -185,8 +236,10 @@ class RefMem:
 
 
 class RefCpu:
-    def __init__(self, mem):
+    def __init__(self, mem, model="core"):
         self.mem = mem
+        self.model = model
+        self.ops = ref_table(model)
         self.a = self.x = self.y = 0
         self.s = 0xFF
         self.c = self.v = self.d = self.n = self.z = self.i = self.b = 0
@@ -374,8 +427,17 @@ class RefCpu:
 
     def exec_insn(self, opcode, operand):
         """Executa uma instrução SEQUENCIAL (sem fluxo de controle)."""
-        mn, mode = REF_OPS[opcode]
-        self.cycles += base_cycles(mn, mode)
+        mn, mode = self.ops[opcode]
+        ext = ext_cycles(opcode, mn, mode)
+        self.cycles += base_cycles(mn, mode) if ext is None else ext
+        if mode in ("nop1", "nop2", "nop3"):
+            return                                          # NOP indocumentado: nenhum acesso à memória
+        if mn[:3] in ("RMB", "SMB"):
+            zp = operand & 0xFF
+            m = self.mem.read(zp)
+            bit = 1 << int(mn[3])
+            self.mem.write(zp, (m & ~bit & 0xFF) if mn[:3] == "RMB" else (m | bit))
+            return
         if mode == "imp":
             self._implied(mn)
             return
@@ -437,8 +499,20 @@ class RefCpu:
 
     def exec_flow(self, mn, mode, operand, addr):
         """Executa um desvio/salto/JSR/RTS/BRK/RTI em 'addr' e deixa o resultado em self.pc."""
-        self.cycles += base_cycles(mn, mode)
         nxt = (addr + _LEN[mode]) & 0xFFFF
+        if is_bit_branch(mn):                                # Lynx II: BBRn/BBSn zp,rel
+            self.cycles += 5
+            m = self.mem.read(operand & 0xFF)
+            bit_set = (m >> int(mn[3])) & 1
+            if bit_set == (1 if mn[:3] == "BBS" else 0):
+                rel = operand >> 8
+                tgt = (nxt + (rel - 256 if rel & 0x80 else rel)) & 0xFFFF
+                self.cycles += 1 + (1 if (tgt & 0xFF00) != (nxt & 0xFF00) else 0)
+                self.pc = tgt
+            else:
+                self.pc = nxt
+            return
+        self.cycles += base_cycles(mn, mode)
         if mode == "rel":
             taken = True if mn == "BRA" else (self._flag(BR_COND[mn][0]) == BR_COND[mn][1])
             if taken:
@@ -503,9 +577,9 @@ class RefCpu:
         while True:
             addr = self.pc
             opcode = image[addr - org]
-            if opcode not in REF_OPS:
+            if opcode not in self.ops:
                 raise ValueError("opcode $%02X em $%04X fora do subconjunto de referência" % (opcode, addr))
-            mn, mode = REF_OPS[opcode]
+            mn, mode = self.ops[opcode]
             n = _LEN[mode]
             if n == 1:
                 operand = None
@@ -513,7 +587,7 @@ class RefCpu:
                 operand = self.mem.read(addr + 1) if (mode == "imm" and (addr + 1) in smc) else image[addr - org + 1]
             else:
                 operand = image[addr - org + 1] | (image[addr - org + 2] << 8)
-            flow = mn in FLOW_MNEMONICS
+            flow = mn in FLOW_MNEMONICS or is_bit_branch(mn)
             if flow:
                 self.exec_flow(mn, mode, operand, addr)
             else:
@@ -530,10 +604,10 @@ class RefCpu:
         off = 0
         while off < len(code):
             opcode = code[off]
-            if opcode not in REF_OPS:
+            if opcode not in self.ops:
                 raise ValueError("opcode $%02X fora do subconjunto de referência" % opcode)
-            mn, mode = REF_OPS[opcode]
-            if mn in FLOW_MNEMONICS:
+            mn, mode = self.ops[opcode]
+            if mn in FLOW_MNEMONICS or is_bit_branch(mn):
                 raise ValueError("run() é só para blocos retos; use run_program()")
             n = _LEN[mode]
             if n == 1:
