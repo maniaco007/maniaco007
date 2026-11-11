@@ -1,7 +1,7 @@
 # 01 — Visão geral e fluxo de dados
 
-> Estágio: **arquitetura (v0.1.0) — aguardando aprovação**. Nenhum tradutor de
-> opcodes nem código de inicialização do Cel Engine foi escrito.
+> Documento de arquitetura (v0.1.0, **aprovada**). Estado de implementação: v0.2.0 traduz
+> LDA/STA/ADC/SBC (`docs/06`); inicialização do Cel Engine e demais opcodes ainda não existem.
 
 ## 1. Premissa
 

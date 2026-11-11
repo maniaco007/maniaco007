@@ -11,3 +11,6 @@ Interpretador **no PC** (nunca vai para o 3DO). Dois papéis:
 
 Também carrega a imagem de boot do Lynx **fornecida pelo usuário** (não distribuída aqui).
 Escopo mínimo: só o necessário para trace e testes (decisão D9).
+
+**v0.2.0:** `lynxtrace/core65c02.py` — oráculo do subconjunto LDA/STA/ADC/SBC, escrito de forma independente
+do tradutor (tabela de opcodes derivada do padrão de bits; ver docstring). Perfil dinâmico (`trace.bin`): a fazer.

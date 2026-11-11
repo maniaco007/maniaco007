@@ -1,0 +1,75 @@
+"""Decoder 65C02 (subconjunto). Nunca adivinha: opcode fora da tabela é erro explícito."""
+
+from dataclasses import dataclass
+from typing import List, Optional
+
+from .optable import Optable
+
+_TABLE = Optable()
+
+
+class DecodeError(Exception):
+    pass
+
+
+class UnsupportedOpcode(DecodeError):
+    def __init__(self, opcode, addr):
+        super().__init__("opcode $%02X em $%04X ainda não suportado pelo lynx2c" % (opcode, addr))
+        self.opcode, self.addr = opcode, addr
+
+
+class TruncatedInstruction(DecodeError):
+    def __init__(self, addr):
+        super().__init__("instrução em $%04X truncada (faltam bytes de operando)" % addr)
+        self.addr = addr
+
+
+@dataclass(frozen=True)
+class Insn:
+    addr: int
+    opcode: int
+    mnemonic: str
+    mode: str
+    length: int
+    operand: Optional[int]  # None p/ modos sem operando (nenhum no subconjunto atual)
+    cycles: int
+    page_cross: bool
+    sem: str
+
+    @property
+    def next_addr(self):
+        return (self.addr + self.length) & 0xFFFF
+
+    def text(self):
+        o, m = self.operand, self.mode
+        fmt = {"imm": "#$%02X", "zp": "$%02X", "zpx": "$%02X,X", "abs": "$%04X",
+               "absx": "$%04X,X", "absy": "$%04X,Y", "izx": "($%02X,X)",
+               "izy": "($%02X),Y", "izp": "($%02X)"}[m]
+        return "%s %s" % (self.mnemonic, fmt % o)
+
+
+def decode_one(data: bytes, offset: int, addr: int, table: Optable = _TABLE) -> Insn:
+    opcode = data[offset]
+    info = table.get(opcode)
+    if info is None:
+        raise UnsupportedOpcode(opcode, addr)
+    if offset + info.length > len(data):
+        raise TruncatedInstruction(addr)
+    if info.length == 1:
+        operand = None
+    elif info.length == 2:
+        operand = data[offset + 1]
+    else:
+        operand = data[offset + 1] | (data[offset + 2] << 8)  # little-endian, composto de bytes
+    return Insn(addr & 0xFFFF, opcode, info.mnemonic, info.mode, info.length,
+                operand, info.cycles, info.page_cross, info.sem)
+
+
+def decode_block(data: bytes, org: int) -> List[Insn]:
+    """Decodifica linearmente TODO o buffer como UM bloco reto (sem fluxo de controle ainda)."""
+    out, off = [], 0
+    while off < len(data):
+        insn = decode_one(data, off, org + off)
+        out.append(insn)
+        off += insn.length
+    return out

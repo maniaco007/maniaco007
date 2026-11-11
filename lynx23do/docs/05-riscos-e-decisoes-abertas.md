@@ -1,8 +1,10 @@
 # 05 — Riscos e decisões abertas (para aprovação)
 
-## 1. Decisões que preciso que você aprove
+## 1. Decisões D1–D9
 
-Cada item tem uma **recomendação**; sem objeção, sigo as recomendações.
+**Status: aprovadas ("pode seguir") com as recomendações abaixo.** D1 (Python), D2 (sem interpretador),
+D3 (fase 1: bloco-por-função), D4 (C89) já estão em uso no tradutor v0.2.0; D5–D9 valem para as fases do
+HLE/memória ainda não implementadas.
 
 | ID | Decisão | Opções | Recomendação |
 |---|---|---|---|
@@ -36,7 +38,10 @@ Cada item tem uma **recomendação**; sem objeção, sigo as recomendações.
 Parser/decodificador de opcodes 65C02; geração de código dos opcodes; inicialização do
 Cel Engine; HLE do Mikey/áudio; qualquer ROM ou BIOS.
 
-## 4. Próximas etapas sugeridas (após sua aprovação)
+## 4. Próximas etapas
+
+> v0.2.0 concluiu parte do item 3 (ADC, SBC, LDA, STA) — ver `docs/06`.
+
 1. Congelar decisões D1–D9 e corrigir os itens `[VERIFY]` com a documentação.
 2. `lynxtrace` mínimo + `lynx2c` estágios A–C (ingest/discover) sobre um **homebrew** pequeno
    (sem cifra), gerando **apenas `report.md`** (tamanho de código, overlays, SMC).

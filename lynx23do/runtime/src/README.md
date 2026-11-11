@@ -4,7 +4,7 @@ Arquivos planejados (nada implementado ainda); cada um realiza um header em `../
 
 | Arquivo | Realiza | Conteúdo |
 |---|---|---|
-| `lx_mem.c` | `lx_mem.h` | `lx_ram`, `lx_io_read/write`, MAPCTL, ROM de boot/vetores |
+| `lx_mem.c` | `lx_mem.h` | **pronto (parcial):** `lx_ram`, `lx_io_read/write`; MAPCTL/ROM de boot pendentes |
 | `lx_sched.c` | `lx_cpu_abi.h` | `lx_sched_service`, timers do Mikey, IRQ, vblank |
 | `lx_dispatch.c` | `lx_cpu_abi.h` | `lx_run` (trampolim), `lx_dispatch`, `lx_unresolved` |
 | `lx_overlay.c` | `lx_overlay.h` | overlays, hooks, cartucho serial (RCART) |

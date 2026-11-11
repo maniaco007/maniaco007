@@ -12,6 +12,8 @@
 #include "lynx/lx_cel.h"
 #include "lynx/lx_suzy.h"
 #include "lynx/lx_platform.h"
+#include "lynx/lx_mikey.h"
+#include "lynx/lx_alu.h"
 
 /* verificações de layout que o lynx2c e o backend 3DO assumem */
 typedef char chk_dispatch_entry_8[(sizeof(LxDispatchEntry) <= 16) ? 1 : -1];
@@ -28,5 +30,7 @@ lx_u32 lx_header_check_unit(LxCpu *cpu)
     cpu->a = lx_rd8(0x0010);
     p = lx_cpu_pack_p(cpu);
     lx_cpu_unpack_p(cpu, p);
+    lx_adc_dec(cpu, 0x19);
+    lx_sbc_dec(cpu, 0x19);
     return LX_PC_RETURN;
 }
