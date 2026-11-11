@@ -109,6 +109,9 @@ extern lx_u32 lx_unresolved_count;
  * SPRSYS/busy do Suzy e pode DESVIAR para o vetor de IRQ (empilha PC e P). */
 lx_u32 lx_sched_service(LxCpu *cpu, lx_u32 next_pc);
 
+/* Quando o agendador devolve LX_PC_YIELD, o PC onde retomar fica aqui (lx_machine.c; nos testes, em lx_t_yield_pc). */
+extern lx_u32 lx_resume_pc;
+
 /* lx_sched_service() devolve 'next_pc' quando nada aconteceu (ou o PC do vetor de IRQ / LX_PC_YIELD): por isso o
  * retorno dela É o retorno do bloco. Com CHAMADA FINAL o compilador não precisa de quadro de pilha no caminho
  * comum (medido: o custo fixo por bloco caiu de 18 para poucas instruções ARM; ver docs/04 §3). */

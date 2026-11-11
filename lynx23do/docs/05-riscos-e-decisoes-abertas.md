@@ -31,7 +31,7 @@ HLE/memória ainda não implementadas.
 | R7 | **Pilha emulada / RTS trick / troca de tarefas** | retorno errado | RTS verificado + `lx_dispatch`; `RETADDR` em tabela |
 | R8 | **Boot cifrado e ROM de boot** | não dá p/ rodar o trace sem imagem de boot | o usuário fornece a imagem p/ o `lynxtrace`; saída não a contém; suporte a homebrew sem cifra |
 | R9 | **Áudio do Mikey** (4 canais, LFSR) | sem som / fora de tempo | fora do escopo desta fase; interface reservada em `lx_mikey_*` |
-| R10 | **Pouco acesso ao SDK/hardware aqui** | assinaturas/formatos do CCB errados | tudo marcado `[VERIFY]`; backend 3DO só após conferência com a doc; headers validados em C89 no host |
+| R10 | **Pouco acesso ao SDK/hardware aqui** | assinaturas/formatos do CCB errados | **reduzido (v0.7.0):** CCB, flags, ponto fixo e funções conferidos nos headers reais do SDK e no nes-3do; backend analisado contra os headers com sensibilidade provada. **Ainda aberto:** nada foi compilado com o armcc nem executado (docs/11 §5–6) |
 | R11 | **Divergências de ISA** (Lynx tem BBR/BBS/RMB/SMB? WAI/STP?) | opcodes faltando | **resolvido contra o Handy** (docs/09 §1): sem Rockwell; tem `WAI`/`STP`, que faltam implementar (dependem do agendador) |
 
 ## 3. O que está explicitamente fora do escopo agora

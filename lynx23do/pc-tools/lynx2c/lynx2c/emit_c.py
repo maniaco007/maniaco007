@@ -612,3 +612,25 @@ def emit_routine(name, cfg, ops_by_block, root, blocks, roots):
     out.append("    return pc;")
     out.append("}")
     return "\n".join(out) + "\n"
+
+
+# =====================================================================================================
+# Empacotamento: lx_program (descritor do jogo) e imagem de RAM (o que o runtime carrega em lx_ram)
+# =====================================================================================================
+def emit_program(game_name: str, n_overlays: int = 1, cart_size: int = 0) -> str:
+    """LxProgram do jogo: um overlay (lx_ov0) por ora, sem hooks."""
+    return ('const LxProgram lx_program = {\n    "%s", LX_ABI_VERSION, 0, %d, &lx_ov0, 0, 0, %d\n};\n'
+            % (game_name.replace('"', ""), n_overlays, cart_size))
+
+
+def emit_image(image: bytes, load_addr: int, entry: int) -> str:
+    """Imagem que o runtime copia para lx_ram[load_addr..] antes de executar (BS93/raw)."""
+    rows = []
+    for i in range(0, len(image), 16):
+        rows.append("    " + ", ".join("0x%02X" % b for b in image[i:i + 16]))
+    body = ",\n".join(rows) if rows else "    0"
+    return ('#include "lynx/lx_types.h"\n\n'
+            "const lx_u8 lx_game_image[] = {\n%s\n};\n"
+            "const lx_u32 lx_game_image_size = %d;\n"
+            "const lx_u32 lx_game_load_addr = 0x%04X;\n"
+            "const lx_u32 lx_game_entry = 0x%04X;\n" % (body, len(image), load_addr, entry))

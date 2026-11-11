@@ -18,7 +18,7 @@ import sys
 
 from . import __version__
 from .decode import DecodeError, decode_block
-from .emit_c import emit_overlay
+from .emit_c import _HEADER as _H1, emit_image, emit_overlay, emit_program
 from .ingest import IngestError, ingest
 from .pipeline import analyze
 from .report import build_report
@@ -45,6 +45,30 @@ def _load_bytes(args) -> bytes:
             raise SystemExit("erro: --hex inválido: %s" % e)
     with open(args.file, "rb") as f:
         return f.read()
+
+
+def _build_cmd(a, data) -> int:
+    """Estágio A + D–F de ponta a ponta: .o BS93 (ou imagem plana) -> C traduzido + descritor + imagem de RAM."""
+    try:
+        info = ingest(data, org=a.org if _org_given else None)
+        if info.kind == "lnx":
+            print("erro: .lnx comercial exige o perfil dinâmico (ROM de boot do usuário); use BS93 ou imagem plana", file=sys.stderr)
+            return 2
+        entries = a.entry or [info.entry]
+        cfg, ops = analyze(info.data, info.load_addr, entries, False, a.smc_operand or (), a.hook or ())
+    except (IngestError, DecodeError, ValueError) as e:
+        print("erro: %s" % e, file=sys.stderr)
+        return 2
+    os.makedirs(a.out_dir, exist_ok=True)
+    gen = _HDR + emit_overlay(0, cfg, ops, phase=a.phase, max_blocks=a.max_blocks) + "\n" + emit_program(a.name)
+    with open(os.path.join(a.out_dir, a.name + "_gen.c"), "w", encoding="utf-8") as f:
+        f.write(gen)
+    with open(os.path.join(a.out_dir, a.name + "_image.c"), "w", encoding="utf-8") as f:
+        f.write(emit_image(info.data, info.load_addr, entries[0]))
+    print("%s: %d blocos, %d instruções, imagem de %d bytes em $%04X, entrada $%04X -> %s" % (
+        a.name, len(cfg.blocks), sum(len(b.insns) for b in cfg.blocks.values()), len(info.data), info.load_addr,
+        entries[0], a.out_dir))
+    return 0
 
 
 def _ingest_cmds(a, data) -> int:
@@ -90,7 +114,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="lynx2c", description=__doc__.split("\n")[0])
     p.add_argument("--version", action="version", version="lynx2c " + __version__)
     sub = p.add_subparsers(dest="cmd", required=True)
-    for name in ("translate", "disasm", "cfg", "ingest", "report"):
+    for name in ("translate", "disasm", "cfg", "ingest", "report", "build"):
         s = sub.add_parser(name)
         s.add_argument("--org", type=_int, default=None, help="endereço 65C02 do primeiro byte (padrão $0200; obrigatório p/ imagem plana em ingest/report)")
         g = s.add_mutually_exclusive_group(required=True)
@@ -101,7 +125,12 @@ def main(argv=None) -> int:
             s.add_argument("--arm-opt", default="-Os")
             s.add_argument("--out", default="-")
             s.add_argument("--no-arm", action="store_true", help="não medir com clang (usa o fator de referência)")
-        if name in ("translate", "cfg", "report"):
+        if name == "build":
+            s.add_argument("--out-dir", required=True, help="grava <nome>_gen.c (código traduzido + lx_program) e <nome>_image.c")
+            s.add_argument("--name", default="game")
+            s.add_argument("--phase", type=int, choices=(1, 2), default=2)
+            s.add_argument("--max-blocks", type=int, default=None)
+        if name in ("translate", "cfg", "report", "build"):
             s.add_argument("--entry", type=_int, action="append", default=None,
                            help="entrada adicional (repetível); padrão: --org")
             s.add_argument("--hook", type=_int, action="append", default=None, metavar="ADDR",
@@ -124,6 +153,8 @@ def main(argv=None) -> int:
     data = _load_bytes(a)
     if a.cmd in ("ingest", "report"):
         return _ingest_cmds(a, data)
+    if a.cmd == "build":
+        return _build_cmd(a, data)
     if a.cmd == "disasm":
         try:
             insns = decode_block(data, a.org)

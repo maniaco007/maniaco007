@@ -4,6 +4,7 @@ Arquivos planejados (nada implementado ainda); cada um realiza um header em `../
 
 | Arquivo | Realiza | Conteúdo |
 |---|---|---|
+| `lx_video.c`, `lx_machine.c`, `lx_mikey.c`, `lx_suzy_min.c` | `lx_video.h`, `lx_machine.h` | **M1:** paleta/DMA de vídeo do Mikey, agendador de quadro (66 667 ciclos), registradores mínimos (sem timers/IRQ/sprites) |
 | `lx_alu.c` | `lx_alu.h` | **pronto:** ADC/SBC decimal (BCD) fora de linha |
 | `lx_mem.c` | `lx_mem.h` | **pronto (parcial):** `lx_ram`, `lx_io_read/write`; MAPCTL/ROM de boot pendentes |
 | `lx_sched.c` | `lx_cpu_abi.h` | `lx_sched_service`, timers do Mikey, IRQ, vblank |
