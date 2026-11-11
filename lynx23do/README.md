@@ -6,6 +6,8 @@ Framework para portar jogos selecionados de Atari Lynx para rodar **nativamente*
 - **Recompilação estática (AOT)** do 65C02 → C89 (sem interpretador em tempo de execução);
 - **HLE do Suzy**: SCBs de sprite viram Cels e são desenhados por `DrawCels()`.
 
+**v0.7.1 (documentação):** survey de 4 emuladores de Lynx em `docs/12` (tabela de ciclos dos 178 opcodes confere 100 % com o Gearlynx; correções de R11; plano M2/M3).
+
 **Estágio atual: v0.7.0 — tradutor de 178 opcodes com fase 2 (17,9×, 7,1 ARM/instr), validado por Dormann; **backend 3DO escrito e
 verificado estaticamente** contra os headers reais do SDK (devkit do trapexit) e o fluxo do nes-3do; demo 65C02 rodando de ponta a
 ponta no PC. **Falta o primeiro teste no console:** compilar com o `armcc` do SEU devkit e rodar no ODE — passo a passo em
@@ -23,6 +25,7 @@ ponta no PC. **Falta o primeiro teste no console:** compilar com o `armcc` do SE
 9. [`docs/09-fontes-independentes-medicao-arm-e-ingest.md`](docs/09-fontes-independentes-medicao-arm-e-ingest.md) — Handy, expansão ARM medida, ingest/report
 10. [`docs/10-fase2-gerador.md`](docs/10-fase2-gerador.md) — rotinas fundidas, 17,9×, o limite de blocos, bugs achados
 11. [`docs/11-plataforma-3do-e-primeiro-teste.md`](docs/11-plataforma-3do-e-primeiro-teste.md) — **o que reaproveitei do GitHub, o que foi verificado, como fazer o 1º teste no ODE**
+12. [`docs/12-survey-emuladores-lynx.md`](docs/12-survey-emuladores-lynx.md) — **survey de Felix, Gearlynx, libretro-handy e Cardputer: modelo de ticks, timers do Mikey, especificação do Suzy, boot HLE, padrões para outros consoles**
 
 ## Estrutura
 ```

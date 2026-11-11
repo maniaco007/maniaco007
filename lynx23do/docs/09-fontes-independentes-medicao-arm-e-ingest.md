@@ -15,7 +15,7 @@ Três frentes: (1) tirar `[VERIFY]` do conjunto de opcodes, ciclos e BCD usando 
 |---|---|
 | O CPU do Lynx tem `BBR/BBS/RMB/SMB` (Rockwell)? | **Não**: todos ilegais no Handy |
 | NOPs indefinidos de 2/3 bytes? | **Ilegais** no Handy (os 76 opcodes que eu rejeito são exatamente os ilegais dele) |
-| Opcodes do Handy que faltam na minha tabela | só **`WAI` (`$CB`) e `STP` (`$DB`)** — dependem do agendador (dormir até IRQ / parar) |
+| Opcodes do Handy que faltam na minha tabela | só **`WAI` (`$CB`) e `STP` (`$DB`)** — dependem do agendador (dormir até IRQ / parar). **Revisto em `docs/12` §2:** Felix e Gearlynx tratam `CB`/`DB` como NOP de 1 byte; o Handy é o único que os faz dormir |
 | Mnemônicos | **178/178 coincidem** |
 | Ciclos-base | **172/178 coincidem**; 6 divergências, todas explicadas abaixo |
 

@@ -27,12 +27,16 @@ HLE/memória ainda não implementadas.
 | R3 | **Tamanho do código traduzido** (640 KB) | jogo não cabe | **MEDIDO: 27× (fase 1) → 17,9× (fase 2) ⇒ ~35 KB de 65C02 em 640 KB** (docs/04 §3, docs/10). `lynx2c report` mede o jogo real; meta ≤10× exige fase 2b + forma *cold* |
 | R4 | **Colisão** (Suzy→depósito no SCB) sem equivalente no Cel Engine | jogabilidade errada | `BBOX`/`PIXEL`; escolha por jogo |
 | R5 | **Fidelidade de escala/distorção** (acumuladores do Suzy vs. matriz do CCB; STRETCH, TILT+flip) | artefatos visuais | classificação `NATIVE/APPROX/FALLBACK` + diff host-vs-referência por frame |
-| R6 | **Temporização** (timers, IRQ em fronteira de bloco, `busy`) | travas em *vsync-wait*, áudio fora | ciclos por bloco; verificação obrigatória em arestas de retorno |
+| R6 | **Temporização** (timers, IRQ em fronteira de bloco, `busy`) | travas em *vsync-wait*, áudio fora | ciclos por bloco; verificação obrigatória em arestas de retorno. **Refinado (docs/12 §3–4):** unidade real = ticks de 16 MHz (busca 4, dado 5; `MAPCTL.7`), quadro dirigido pelos timers 0/2 (50–75 Hz conforme o jogo) — a constante `66 667` do M1 é provisória |
 | R7 | **Pilha emulada / RTS trick / troca de tarefas** | retorno errado | RTS verificado + `lx_dispatch`; `RETADDR` em tabela |
 | R8 | **Boot cifrado e ROM de boot** | não dá p/ rodar o trace sem imagem de boot | o usuário fornece a imagem p/ o `lynxtrace`; saída não a contém; suporte a homebrew sem cifra |
 | R9 | **Áudio do Mikey** (4 canais, LFSR) | sem som / fora de tempo | fora do escopo desta fase; interface reservada em `lx_mikey_*` |
 | R10 | **Pouco acesso ao SDK/hardware aqui** | assinaturas/formatos do CCB errados | **reduzido (v0.7.0):** CCB, flags, ponto fixo e funções conferidos nos headers reais do SDK e no nes-3do; backend analisado contra os headers com sensibilidade provada. **Ainda aberto:** nada foi compilado com o armcc nem executado (docs/11 §5–6) |
-| R11 | **Divergências de ISA** (Lynx tem BBR/BBS/RMB/SMB? WAI/STP?) | opcodes faltando | **resolvido contra o Handy** (docs/09 §1): sem Rockwell; tem `WAI`/`STP`, que faltam implementar (dependem do agendador) |
+| R11 | **Divergências de ISA** (Lynx tem BBR/BBS/RMB/SMB? WAI/STP?) | opcodes faltando | **REVISTO (docs/12 §2, 3 emuladores):** Lynx I sem Rockwell (NOPs de 1 B); **Lynx II tem** RMB/SMB/BBR/BBS (5 ciclos); `CB`/`DB` são **NOP de 1 B** (só o Handy os faz dormir); o Lynx I tem 14 NOPs multi-byte que o `lynx2c` hoje recusa. Tabela de ciclos/tamanhos dos 178 opcodes **confere 100 %** com o Gearlynx |
+
+| R12 | **Taxa de quadros ≠ 60 Hz** (jogos a 50/52/75 Hz; 3DO apresenta a 60) | jogo lento/rápido ou *tearing* | lógica por ticks, apresentação desacoplada com repetição/descarte de quadros (docs/12 §4.1) |
+| R13 | **Licença de código de terceiros** (Gearlynx é GPLv3; Handy zlib-like; Felix/Cardputer MIT) | contaminação do framework | só **fatos** de hardware dos GPL, sempre com 2ª fonte; código só de MIT com crédito em `NOTICE` (docs/12) |
+| R14 | **Discordância entre emuladores** (page-cross em leitura indexada; fronteira de 16 B do modo página; `WAI/STP`) | erro de ±1 ciclo ou opcode errado | decisão registrada em docs/12; árbitro = captura de hardware (`tests/logic-analyzer` do Gearlynx) / ROMs de teste |
 
 ## 3. O que está explicitamente fora do escopo agora
 Parser/decodificador de opcodes 65C02; geração de código dos opcodes; inicialização do

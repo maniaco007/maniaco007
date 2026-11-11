@@ -15,6 +15,8 @@ extensões 65C02 de uso geral. É o conjunto que roda a suíte funcional de Klau
 | Pilha | `PHA PLA PHP PLP`, `PHX PLX PHY PLY` (65C02) |
 | Interrupção | `BRK` (2 bytes), `RTI` |
 
+> **Nota (v0.8, `docs/12` §2):** a tabela de ciclos/tamanhos destes 178 opcodes foi conferida contra o Gearlynx (Lynx I e II): 0 divergências. O Lynx II tem os Rockwell; `CB`/`DB` são NOP.
+
 **Fora do conjunto, de propósito** (decoder rejeita com erro explícito): `BBR/BBS/RMB/SMB` (Rockwell), `WAI/STP` (WDC),
 NOPs indefinidos de 2/3 bytes. `[VERIFY]` se o CPU do Lynx os tem.
 

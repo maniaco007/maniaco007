@@ -1,0 +1,21 @@
+# Saídas geradas (reproduzíveis a partir das entradas)
+build/
+*.o
+*.obj
+*.iso
+__pycache__/
+*.pyc
+
+# ROMs, BIOS e imagens de boot NÃO entram no repositório
+*.lnx
+*.lyx
+*.rom
+*.bin
+!games/_template/*.bin
+lynxboot*
+roms/
+
+# Traces e logs de execução
+trace.bin
+unresolved.log
+*.lst
